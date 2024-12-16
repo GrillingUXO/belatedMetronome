@@ -1,0 +1,13 @@
+librosa
+numpy
+soundfile
+scipy
+pathlib
+music21
+pretty_midi
+matplotlib
+crepe
+tk
+madmom
+tqdm
+
