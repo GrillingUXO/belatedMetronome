@@ -14,7 +14,7 @@ from scipy.signal import find_peaks, hilbert, peak_widths, butter, filtfilt, res
 import matplotlib.pyplot as plt
 import crepe
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import madmom
 from madmom.features import CNNOnsetProcessor
@@ -73,6 +73,7 @@ def detect_onsets(audio_path, save_onsets=True):
         raise ValueError("Onset detection failed: no activations detected.")
 
     return onset_activations
+
 
 
 
@@ -455,6 +456,28 @@ def process(freqs,
 
     
 #Adjust functions#########################################
+def convert_perf_note_types(note_mappings):
+    """
+    Converts the start time, pitch, and duration of performance notes to numeric types.
+
+    Args:
+        note_mappings (list): List of note mappings, each containing a "performance_note".
+
+    Returns:
+        list: Updated note_mappings with all performance note values converted to numeric types.
+    """
+    for mapping in note_mappings:
+        perf_note = mapping.get("performance_note")
+        if perf_note and isinstance(perf_note, tuple) and len(perf_note) >= 3:
+            try:
+                # Convert start_time, pitch, duration to float
+                start_time = float(perf_note[0])
+                pitch = int(perf_note[1])  # Assuming pitch is an integer MIDI value
+                duration = float(perf_note[2])
+                mapping["performance_note"] = (start_time, pitch, duration)
+            except ValueError as e:
+                print(f"Error converting performance_note: {perf_note}, Error: {e}")
+    return note_mappings
 
 
 
@@ -476,14 +499,20 @@ def record_audio_midi_mapping(output_notes, sr, output_folder, output_label="aud
 
     mapping = []
     for note in output_notes:
-        mapping.append({
+        mapping_entry = {
             "pitch": note["pitch"],
             "velocity": note["velocity"],
             "start_time": note["start_idx"] * 0.01,
             "end_time": note["finish_idx"] * 0.01,
             "sample_start": int(librosa.time_to_samples(note["start_idx"] * 0.01, sr=sr)),
             "sample_end": int(librosa.time_to_samples(note["finish_idx"] * 0.01, sr=sr))
-        })
+        }
+        if "reference_note" in note and note["reference_note"] is None:
+            mapping_entry["status"] = "unmatched"
+        else:
+            mapping_entry["status"] = "matched"
+
+        mapping.append(mapping_entry)
 
     mapping_file_path = os.path.join(output_folder, f"{output_label}.json")
     with open(mapping_file_path, "w") as f:
@@ -491,6 +520,7 @@ def record_audio_midi_mapping(output_notes, sr, output_folder, output_label="aud
 
     print(f"Audio-MIDI mapping saved to: {mapping_file_path}")
     return mapping_file_path
+
 
 
 
@@ -514,6 +544,7 @@ def process_with_adjustments(audio_path, reference_midi_path, output_folder):
     # Correct performance audio
     output_audio_file = os.path.join(output_folder, "corrected_performance_audio.wav")
     correct_performance_audio(audio_path, performance_midi_file, reference_midi_path, output_audio_file)
+
 
 
 
@@ -591,18 +622,33 @@ def correct_performance_audio(audio_file, performance_midi_file, reference_midi_
 
 
 
-def calculate_relative_metrics(notes):
+def calculate_relative_metrics(notes, bpm):
+    """
+    Calculates relative metrics for a list of notes based on BPM.
 
-    if not notes:
-        return []
+    Args:
+        notes (list): List of notes as tuples (start_time, pitch, duration).
+        bpm (float): Beats per minute of the MIDI.
 
-    first_note_time = notes[0][0]
-    first_note_duration = notes[0][2]
+    Returns:
+        list of dict: Notes with relative timing and duration metrics.
+    """
+    if not notes or bpm <= 0:
+        raise ValueError("Invalid notes list or BPM must be greater than 0.")
+
+    # Convert BPM to beat duration (seconds per beat)
+    seconds_per_beat = 60 / bpm
 
     relative_notes = []
+    first_note_time = notes[0][0]  # Reference start time (absolute)
+
     for i, (start_time, pitch, duration) in enumerate(notes):
-        relative_time = (start_time - first_note_time) / first_note_duration
-        relative_duration = duration / first_note_duration
+        # Calculate relative time (start time relative to the first note)
+        relative_time = (start_time - first_note_time) / seconds_per_beat
+
+        # Calculate relative duration (note duration as a fraction of a beat)
+        relative_duration = duration / seconds_per_beat
+
         relative_notes.append({
             "index": i,
             "start_time": start_time,
@@ -616,43 +662,51 @@ def calculate_relative_metrics(notes):
 
 
 
+
 from tqdm import tqdm
 
 def find_matching_notes(performance_notes, reference_notes, bpm):
     """
-    Matches performance MIDI notes to reference MIDI notes with improved tolerance,
-    fallback, and unmatched note preservation.
+    Matches performance MIDI notes to reference MIDI notes using BPM-relative timing.
     
     Args:
         performance_notes (list of tuples): Performance MIDI notes as (start_time, pitch, duration).
         reference_notes (list of tuples): Reference MIDI notes as (start_time, pitch, duration).
-        bpm (float): Beats per minute of the reference MIDI.
+        bpm (float): Beats er minute of the reference MIDI.
 
     Returns:
         list of dict: Matching note pairs with time and offset correction factors, including retained unmatched notes.
     """
-    perf_rel_notes = calculate_relative_metrics(performance_notes)
-    ref_rel_notes = calculate_relative_metrics(reference_notes)
+    if bpm <= 0:
+        raise ValueError("BPM must be greater than 0.")
+
+    # Calculate relative metrics based on BPM
+    perf_rel_notes = calculate_relative_metrics(performance_notes, bpm)
+    ref_rel_notes = calculate_relative_metrics(reference_notes, bpm)
 
     matches = []
     unmatched_notes = []
     tolerance = max(0.1, 60 / (4 * bpm))  # 16th note tolerance with a minimum threshold
 
-    # First pass: Match notes with relative metrics
+    # First pass: Match notes using BPM-relative timing and pitch
     for perf_note in perf_rel_notes:
         closest_match = None
         min_distance = float('inf')
 
         for ref_note in ref_rel_notes:
             if ref_note["pitch"] == perf_note["pitch"]:
+                # Compare BPM-relative timing
                 time_diff = abs(ref_note["relative_time"] - perf_note["relative_time"])
                 if time_diff <= tolerance and time_diff < min_distance:
                     closest_match = ref_note
                     min_distance = time_diff
 
         if closest_match:
-            time_correction = closest_match["duration"] / perf_note["duration"] if perf_note["duration"] > 0 else 1.0
+            # Calculate time correction and offset
+            time_correction = closest_match["relative_duration"] / perf_note["relative_duration"] \
+                if perf_note["relative_duration"] > 0 else 1.0
             relative_offset = closest_match["start_time"] - perf_note["start_time"]
+
             matches.append({
                 "performance_note": perf_note,
                 "reference_note": closest_match,
@@ -662,7 +716,7 @@ def find_matching_notes(performance_notes, reference_notes, bpm):
         else:
             unmatched_notes.append(perf_note)
 
-    # Fallback: Match unmatched notes by pitch and duration
+    # Fallback: Match unmatched notes by pitch and relative duration
     if unmatched_notes:
         retained_unmatched_notes = []
         for perf_note in unmatched_notes:
@@ -670,7 +724,7 @@ def find_matching_notes(performance_notes, reference_notes, bpm):
                 ref_rel_notes,
                 key=lambda ref_note: (
                     abs(ref_note["pitch"] - perf_note["pitch"]) +
-                    abs(ref_note["duration"] - perf_note["duration"])
+                    abs(ref_note["relative_duration"] - perf_note["relative_duration"])
                 ),
                 default=None
             )
@@ -703,17 +757,39 @@ def find_matching_notes(performance_notes, reference_notes, bpm):
     return matches
 
 
-
 def adjust_audio_segments(note_mappings, audio_file, output_folder):
     """
-    Adjusts audio segments based on note mappings and outputs the corrected audio.
-
+    Adjusts audio segments based on time_correction for each note and concatenates them sequentially.
+    
     Args:
-        note_mappings (list): Mappings of performance and reference notes with corrections.
+        note_mappings (list): Mappings of performance notes with corrections (time_correction).
         audio_file (str): Path to the original performance audio file.
         output_folder (str): Directory to save the adjusted audio.
     """
+    import numpy as np
+    import librosa
+    import soundfile as sf
+    import os
+
+    # Monkey patch to convert string types to numeric for performance_note
+    def convert_perf_note_types(note_mappings):
+        for mapping in note_mappings:
+            perf_note = mapping.get("performance_note")
+            if perf_note and isinstance(perf_note, tuple) and len(perf_note) >= 3:
+                try:
+                    start_time = float(perf_note[0])
+                    pitch = int(perf_note[1])
+                    duration = float(perf_note[2])
+                    mapping["performance_note"] = (start_time, pitch, duration)
+                except ValueError as e:
+                    print(f"Error converting performance_note: {perf_note}, Error: {e}")
+        return note_mappings
+
+    # Apply the monkey patch
+    note_mappings = convert_perf_note_types(note_mappings)
+
     try:
+        # Load the original audio file
         y, sr = sf.read(audio_file)
     except Exception as e:
         raise RuntimeError(f"Error reading audio file: {e}")
@@ -721,58 +797,77 @@ def adjust_audio_segments(note_mappings, audio_file, output_folder):
     if not note_mappings:
         raise ValueError("No valid note mappings found. Ensure MIDI alignment is correct.")
 
-    adjusted_audio = np.zeros_like(y)
-    any_segment_adjusted = False
+    # Initialize an empty list to collect adjusted audio segments
+    adjusted_audio_segments = []
 
     for i, mapping in enumerate(note_mappings):
-        perf_note = mapping["performance_note"]
-        orig_note = mapping["reference_note"]
-
         try:
-            # Calculate correction factors
-            time_correction = max(0.1, mapping["time_correction"])  # Avoid zero or very small values
-            offset_correction = mapping["relative_offset"]
+            perf_note = mapping["performance_note"]
 
-            # Extract and adjust audio segment
-            start_idx = librosa.time_to_samples(perf_note["start_time"], sr=sr)
-            end_idx = librosa.time_to_samples(perf_note["start_time"] + perf_note["duration"], sr=sr)
+            # 如果音符无效，跳过
+            if perf_note is None:
+                print(f"[Note {i}] Note deleted, skipping corresponding audio segment.")
+                continue
+
+            # 提取 performance_note 的开始时间和持续时间
+            if isinstance(perf_note, dict):
+                start_time = perf_note.get("start")
+                duration = perf_note.get("duration")
+            elif isinstance(perf_note, tuple):
+                start_time, _, duration = perf_note
+            else:
+                print(f"[Note {i}] Invalid note format: {type(perf_note)}")
+                continue
+
+            # 确保 start_time 和 duration 是数值类型
+            if not isinstance(start_time, (int, float)) or not isinstance(duration, (int, float)):
+                raise TypeError(f"[Note {i}] Start time and duration must be numeric: {perf_note}")
+
+            # 提取 time_correction
+            time_correction = mapping.get("time_correction", 1.0)  # 默认值为 1.0
+
+            # 将时间转换为采样索引
+            start_idx = librosa.time_to_samples(start_time, sr=sr)
+            end_idx = librosa.time_to_samples(start_time + duration, sr=sr)
+
+            # 检查采样索引是否有效
+            if start_idx >= end_idx or start_idx < 0 or end_idx > len(y):
+                print(f"[Note {i}] Skipping invalid segment: start_idx={start_idx}, end_idx={end_idx}")
+                continue
+
+            # 提取音频片段
             segment = y[start_idx:end_idx]
 
             if len(segment) == 0:
-                print(f"[Note {i}] Skipping empty segment: {perf_note}")
+                print(f"[Note {i}] Skipping empty segment.")
                 continue
 
-            # Apply time correction
+            # 调整片段速度
             adjusted_segment = librosa.effects.time_stretch(segment, rate=1 / time_correction)
 
-            # Place the adjusted segment in the output
-            corrected_start_idx = int(start_idx + offset_correction * sr)
-            corrected_end_idx = corrected_start_idx + len(adjusted_segment)
-
-            if corrected_end_idx <= len(adjusted_audio):
-                adjusted_audio[corrected_start_idx:corrected_end_idx] += adjusted_segment
-                any_segment_adjusted = True
-            else:
-                adjusted_audio[corrected_start_idx:] += adjusted_segment[:len(adjusted_audio) - corrected_start_idx]
-                any_segment_adjusted = True
+            # 将调整后的片段加入结果列表
+            adjusted_audio_segments.append(adjusted_segment)
 
         except Exception as e:
             print(f"[Note {i}] Error processing segment: {e}")
             continue
 
-    if not any_segment_adjusted:
-        raise ValueError("No segments were successfully adjusted. Check note mappings and audio alignment.")
+    # 无缝拼接所有片段
+    if adjusted_audio_segments:
+        adjusted_audio = np.concatenate(adjusted_audio_segments)
 
-    # Normalize audio
-    adjusted_audio = librosa.util.normalize(adjusted_audio)
+        # 对音频进行归一化处理，避免音量溢出
+        adjusted_audio = librosa.util.normalize(adjusted_audio)
 
-    # Save adjusted audio
-    output_audio_file = os.path.join(output_folder, "adjusted_output.wav")
-    try:
-        sf.write(output_audio_file, adjusted_audio, sr)
-        print(f"Adjusted audio saved to: {output_audio_file}")
-    except Exception as e:
-        raise RuntimeError(f"Error saving adjusted audio: {e}")
+        # 保存调整后的音频
+        output_audio_file = os.path.join(output_folder, "adjusted_output.wav")
+        try:
+            sf.write(output_audio_file, adjusted_audio, sr)
+            print(f"Adjusted audio saved to: {output_audio_file}")
+        except Exception as e:
+            raise RuntimeError(f"Error saving adjusted audio: {e}")
+    else:
+        raise RuntimeError("No valid audio segments to concatenate.")
 
 
 
@@ -805,97 +900,250 @@ def show_gui_with_autofit(original_midi, performance_midi):
 #Main GUI#############################################
 
 
-def select_file(entry_widget):
-    file_path = filedialog.askopenfilename()
-    entry_widget.delete(0, tk.END)
-    entry_widget.insert(0, file_path)
+    
+import tkinter as tk
+from tkinter import ttk, simpledialog
 
-def select_folder(entry_widget):
-    folder_path = filedialog.askdirectory()
-    entry_widget.delete(0, tk.END)
-    entry_widget.insert(0, folder_path)
+
+def select_file(entry):
+    filepath = filedialog.askopenfilename()
+    entry.delete(0, tk.END)
+    entry.insert(0, filepath)
+
+
+def select_folder(entry):
+    folderpath = filedialog.askdirectory()
+    entry.delete(0, tk.END)
+    entry.insert(0, folderpath)
+
+
+
+def manual_note_editing(performance_midi_file):
+    """
+    GUI to manually edit Performance MIDI notes: modify start time, duration, pitch, or delete notes.
+    Returns note mappings including relative_offset and time_correction.
+
+    Args:
+        performance_midi_file (str): Path to the performance MIDI file.
+
+    Returns:
+        list: A list of note mappings with relative_offset and time_correction.
+    """
+    # 加载 Performance MIDI 文件
+    perf_pm = pm.PrettyMIDI(performance_midi_file)
+    original_notes = [
+        {"start": note.start, "pitch": note.pitch, "duration": note.end - note.start}
+        for inst in perf_pm.instruments for note in inst.notes
+    ]
+
+    # 创建副本供编辑
+    edited_notes = original_notes.copy()
+
+    # 初始化返回值
+    note_mappings = []
+
+    # 初始化 Tkinter 窗口
+    root = tk.Tk()
+    root.title("Manual Note Editor")
+
+    # 表格显示音符
+    columns = ("Index", "Start Time", "Pitch", "Duration")
+    tree = ttk.Treeview(root, columns=columns, show="headings", height=10)
+    for col in columns:
+        tree.heading(col, text=col)
+    tree.pack(pady=10, padx=10)
+
+    # 填充表格数据
+    for i, note in enumerate(original_notes):
+        tree.insert("", "end", iid=i, values=(i, round(note["start"], 3), note["pitch"], round(note["duration"], 3)))
+
+    # 输入框
+    ttk.Label(root, text="Start Time:").pack()
+    start_entry = ttk.Entry(root)
+    start_entry.pack()
+
+    ttk.Label(root, text="Pitch:").pack()
+    pitch_entry = ttk.Entry(root)
+    pitch_entry.pack()
+
+    ttk.Label(root, text="Duration:").pack()
+    duration_entry = ttk.Entry(root)
+    duration_entry.pack()
+
+    # 选中音符后填充到输入框
+    def on_note_select(event):
+        selected = tree.selection()
+        if not selected:
+            return
+        idx = int(selected[0])
+        note = edited_notes[idx]
+        start_entry.delete(0, tk.END)
+        start_entry.insert(0, str(note["start"]))
+        pitch_entry.delete(0, tk.END)
+        pitch_entry.insert(0, str(note["pitch"]))
+        duration_entry.delete(0, tk.END)
+        duration_entry.insert(0, str(note["duration"]))
+
+    tree.bind("<<TreeviewSelect>>", on_note_select)
+
+    # 编辑音符
+    def edit_note():
+        selected = tree.selection()
+        if not selected:
+            messagebox.showerror("Error", "Please select a note to edit.")
+            return
+        idx = int(selected[0])
+        try:
+            new_start = float(start_entry.get())
+            new_pitch = int(pitch_entry.get())
+            new_duration = float(duration_entry.get())
+            edited_notes[idx] = {"start": new_start, "pitch": new_pitch, "duration": new_duration}
+            tree.item(idx, values=(idx, round(new_start, 3), new_pitch, round(new_duration, 3)))
+        except ValueError:
+            messagebox.showerror("Error", "Invalid input. Please enter numeric values.")
+
+    # 删除音符
+    def delete_note():
+        selected = tree.selection()
+        if not selected:
+            messagebox.showerror("Error", "Please select a note to delete.")
+            return
+        idx = int(selected[0])
+        edited_notes[idx] = None
+        tree.delete(idx)
+
+    # 保存修改并退出
+    def confirm_changes():
+        # 计算 relative_offset 和 time_correction
+        nonlocal note_mappings  # 使用外部变量存储计算结果
+        for original, edited in zip(original_notes, edited_notes):
+            if edited is None:
+                continue
+            relative_offset = edited["start"] - original["start"]
+            time_correction = edited["duration"] / original["duration"] if original["duration"] > 0 else 1.0
+            note_mappings.append({
+                "performance_note": original,
+                "relative_offset": relative_offset,
+                "time_correction": time_correction
+            })
+
+        # 保存修改后的 MIDI 文件
+        for inst in perf_pm.instruments:
+            inst.notes.clear()
+            for note in edited_notes:
+                if note is not None:
+                    inst.notes.append(pm.Note(
+                        velocity=100,
+                        pitch=note["pitch"],
+                        start=note["start"],
+                        end=note["start"] + note["duration"]
+                    ))
+        updated_midi_file = performance_midi_file.replace(".mid", "_manual_edited.mid")
+        perf_pm.write(updated_midi_file)
+        messagebox.showinfo("Success", f"Updated MIDI saved to {updated_midi_file}")
+        root.destroy()
+
+    ttk.Button(root, text="Edit Note", command=edit_note).pack(pady=5)
+    ttk.Button(root, text="Delete Note", command=delete_note).pack(pady=5)
+    ttk.Button(root, text="Confirm Changes", command=confirm_changes).pack(pady=10)
+
+    root.mainloop()
+    return note_mappings
 
 
 def process_and_visualize(audio_file, musicxml_file, output_folder, match_mode="automatic"):
-    """
-    Main processing function that handles audio preprocessing, MIDI conversion, note matching,
-    and audio segment adjustments. Outputs adjusted audio and logs note correspondences.
-
-    Args:
-        audio_file (str): Path to the input audio file.
-        musicxml_file (str): Path to the MusicXML file.
-        output_folder (str): Directory to save the output files.
-        match_mode (str): Matching mode, either 'manual' or 'automatic'. Default is 'automatic'.
-    """
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    if not os.path.isfile(audio_file) or not os.path.isfile(musicxml_file):
-        print("请选择有效的文件路径！")
-        return
-
     try:
-        # Convert MusicXML to MIDI
+        # 1. Convert MusicXML to MIDI
         musicxml_midi_file = os.path.join(output_folder, "musicxml.mid")
         musicxml_to_midi(musicxml_file, musicxml_midi_file)
 
-        # Preprocess audio and run CREPE analysis
+        # 2. Preprocess audio and extract F0
         cleaned_audio_file = os.path.join(output_folder, "cleaned_audio.wav")
         preprocess_audio(audio_file, cleaned_audio_file)
-
         frequency, confidence = run_crepe(cleaned_audio_file)
 
-        # Generate performance MIDI
+        # 3. Generate Performance MIDI
         performance_midi_file = process(
-            freqs=frequency,
-            conf=confidence,
+            freqs=frequency, conf=confidence,
             audio_path=Path(cleaned_audio_file),
-            output_label="performance",
-            default_sample_rate=44100
+            output_label="performance", default_sample_rate=44100
         )
+        performance_midi_path = os.path.join(output_folder, os.path.basename(performance_midi_file))
+        os.rename(performance_midi_file, performance_midi_path)
 
-        # Move the output MIDI file to the output folder
-        performance_midi_path = Path(performance_midi_file)
-        if performance_midi_path.exists():
-            final_midi_path = Path(output_folder) / performance_midi_path.name
-            os.rename(performance_midi_path, final_midi_path)
-            performance_midi_file = str(final_midi_path)
+        # 4. Note Mapping Logic
+        if match_mode == "manual":
+            note_mappings = manual_note_editing(performance_midi_path)
+        else:
+            original_pm = pm.PrettyMIDI(musicxml_midi_file)
+            performance_pm = pm.PrettyMIDI(performance_midi_path)
+            original_notes = [(note.start, note.pitch, note.end - note.start)
+                              for inst in original_pm.instruments for note in inst.notes]
+            performance_notes = [(note.start, note.pitch, note.end - note.start)
+                                 for inst in performance_pm.instruments for note in inst.notes]
+            bpm = original_pm.estimate_tempo()
+            note_mappings = find_matching_notes(performance_notes, original_notes, bpm)
 
-        # Match Notes
-        original_pm = pm.PrettyMIDI(musicxml_midi_file)
-        performance_pm = pm.PrettyMIDI(performance_midi_file)
-        original_notes = [(note.start, note.pitch, note.end - note.start)
-                          for inst in original_pm.instruments for note in inst.notes]
-        performance_notes = [(note.start, note.pitch, note.end - note.start)
-                             for inst in performance_pm.instruments for note in inst.notes]
+        # 5. Adjust audio segments
+        adjust_audio_segments(note_mappings, cleaned_audio_file, output_folder)
 
-        bpm = original_pm.estimate_tempo()
-        matches = find_matching_notes(performance_notes, original_notes, bpm)
-
-        # Adjust audio segments
-        adjust_audio_segments(matches, cleaned_audio_file, output_folder)
-
-        # Log correspondences
-        correspondence_log = os.path.join(output_folder, "correspondence_log.json")
-        with open(correspondence_log, "w") as log_file:
-            json.dump(matches, log_file, indent=4)
-
-        # Remove intermediate files
-        for intermediate_file in [
-            musicxml_midi_file,
-            cleaned_audio_file,
-            cleaned_audio_file.replace(".wav", ".onsets.npz"),
-        ]:
-            if os.path.exists(intermediate_file):
-                os.remove(intermediate_file)
+        print(f"Adjusted audio saved in {output_folder}")
 
     except Exception as e:
-        print(f"Error: {e}.")
+        print(f"Error: {e}")
+
+
+
+def process_and_visualize(audio_file, musicxml_file, output_folder, match_mode="automatic"):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    try:
+        # 1. Convert MusicXML to MIDI
+        musicxml_midi_file = os.path.join(output_folder, "musicxml.mid")
+        musicxml_to_midi(musicxml_file, musicxml_midi_file)
+
+        # 2. Preprocess audio and extract F0
+        cleaned_audio_file = os.path.join(output_folder, "cleaned_audio.wav")
+        preprocess_audio(audio_file, cleaned_audio_file)
+        frequency, confidence = run_crepe(cleaned_audio_file)
+
+        # 3. Generate Performance MIDI
+        performance_midi_file = process(
+            freqs=frequency, conf=confidence,
+            audio_path=Path(cleaned_audio_file),
+            output_label="performance", default_sample_rate=44100
+        )
+        performance_midi_path = os.path.join(output_folder, os.path.basename(performance_midi_file))
+        os.rename(performance_midi_file, performance_midi_path)
+
+        # 4. Note Mapping Logic
+        if match_mode == "manual":
+            note_mappings = manual_note_editing(performance_midi_path)
+        else:
+            original_pm = pm.PrettyMIDI(musicxml_midi_file)
+            performance_pm = pm.PrettyMIDI(performance_midi_path)
+            original_notes = [(note.start, note.pitch, note.end - note.start)
+                              for inst in original_pm.instruments for note in inst.notes]
+            performance_notes = [(note.start, note.pitch, note.end - note.start)
+                                 for inst in performance_pm.instruments for note in inst.notes]
+            bpm = original_pm.estimate_tempo()
+            note_mappings = find_matching_notes(performance_notes, original_notes, bpm)
+
+        # 5. Adjust audio segments
+        adjust_audio_segments(note_mappings, cleaned_audio_file, output_folder)
+
+        print(f"Adjusted audio saved in {output_folder}")
+
+    except Exception as e:
+        print(f"Error: {e}")
 
 
 
 
-# 主界面逻辑
 def start_gui():
     root = tk.Tk()
     root.title("音频和 MIDI 处理工具")
@@ -903,7 +1151,7 @@ def start_gui():
     frame = ttk.Frame(root)
     frame.pack(pady=10, padx=10)
 
-    # File selection
+    # 文件选择输入框
     audio_label = ttk.Label(frame, text="选择音频文件:")
     audio_label.grid(row=0, column=0, sticky="w")
     audio_entry = ttk.Entry(frame, width=50)
@@ -925,13 +1173,18 @@ def start_gui():
     output_button = ttk.Button(frame, text="选择", command=lambda: select_folder(output_entry))
     output_button.grid(row=2, column=2)
 
+    # 匹配模式选择
+    mode_label = ttk.Label(frame, text="选择匹配模式:")
+    mode_label.grid(row=3, column=0, sticky="w")
+    mode_combobox = ttk.Combobox(frame, values=["automatic", "manual"], state="readonly")
+    mode_combobox.set("automatic")
+    mode_combobox.grid(row=3, column=1, padx=5)
 
-    # Process button
     process_button = ttk.Button(
         frame,
-        text="处理并显示 MIDI",
+        text="处理",
         command=lambda: process_and_visualize(
-            audio_entry.get(), musicxml_entry.get(), output_entry.get()
+            audio_entry.get(), musicxml_entry.get(), output_entry.get(), mode_combobox.get()
         )
     )
     process_button.grid(row=4, column=0, columnspan=3, pady=10)
