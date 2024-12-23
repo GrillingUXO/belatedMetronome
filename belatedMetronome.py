@@ -21,6 +21,13 @@ from madmom.features import CNNOnsetProcessor
 _original_CNNOnsetProcessor = CNNOnsetProcessor
 from tqdm import tqdm
 import json
+import moviepy
+from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
+import ffmpeg
+from moviepy.video.fx import all as vfx
+from moviepy.video.fx.speedx import speedx
+
+
 
 #Preprocess functions
 
@@ -76,7 +83,6 @@ def detect_onsets(audio_path, save_onsets=True):
 
 
 
-
 def musicxml_to_midi(musicxml_file, output_midi_file):
     try:
         score = converter.parse(musicxml_file)
@@ -102,13 +108,22 @@ pm.PrettyMIDI.add_default_instrument = add_default_instrument
 
 
 
-def preprocess_audio(input_file, output_file):
+
+def preprocess_audio(input_video_file, output_audio_file):
+    """
+    Extracts audio from a video file and preprocesses it for further analysis.
+    
+    Args:
+        input_video_file (str): Path to the input video file.
+        output_audio_file (str): Path to save the extracted audio file.
+    """
     try:
-        y, sr = librosa.load(input_file, sr=None)
-        sf.write(output_file, y, sr)
-        print(f"Audio file preprocessed and saved to {output_file}")
+        video_clip = VideoFileClip(input_video_file)
+        audio = video_clip.audio
+        audio.write_audiofile(output_audio_file, fps=44100)
+        print(f"Audio extracted and saved to {output_audio_file}")
     except Exception as e:
-        raise RuntimeError(f"Error preprocessing audio file: {e}")
+        raise RuntimeError(f"Error extracting audio from video file: {e}")
 
 
 def run_crepe(audio_path):
@@ -456,28 +471,6 @@ def process(freqs,
 
     
 #Adjust functions#########################################
-def convert_perf_note_types(note_mappings):
-    """
-    Converts the start time, pitch, and duration of performance notes to numeric types.
-
-    Args:
-        note_mappings (list): List of note mappings, each containing a "performance_note".
-
-    Returns:
-        list: Updated note_mappings with all performance note values converted to numeric types.
-    """
-    for mapping in note_mappings:
-        perf_note = mapping.get("performance_note")
-        if perf_note and isinstance(perf_note, tuple) and len(perf_note) >= 3:
-            try:
-                # Convert start_time, pitch, duration to float
-                start_time = float(perf_note[0])
-                pitch = int(perf_note[1])  # Assuming pitch is an integer MIDI value
-                duration = float(perf_note[2])
-                mapping["performance_note"] = (start_time, pitch, duration)
-            except ValueError as e:
-                print(f"Error converting performance_note: {perf_note}, Error: {e}")
-    return note_mappings
 
 
 
@@ -544,7 +537,6 @@ def process_with_adjustments(audio_path, reference_midi_path, output_folder):
     # Correct performance audio
     output_audio_file = os.path.join(output_folder, "corrected_performance_audio.wav")
     correct_performance_audio(audio_path, performance_midi_file, reference_midi_path, output_audio_file)
-
 
 
 
@@ -622,6 +614,11 @@ def correct_performance_audio(audio_file, performance_midi_file, reference_midi_
 
 
 
+import numpy as np
+from scipy.spatial.distance import euclidean
+from fastdtw import fastdtw
+
+
 def calculate_relative_metrics(notes, bpm):
     """
     Calculates relative metrics for a list of notes based on BPM.
@@ -659,6 +656,9 @@ def calculate_relative_metrics(notes, bpm):
         })
 
     return relative_notes
+
+
+
 
 
 
@@ -757,119 +757,175 @@ def find_matching_notes(performance_notes, reference_notes, bpm):
     return matches
 
 
-def adjust_audio_segments(note_mappings, audio_file, output_folder):
+
+
+import numpy as np
+import librosa
+import soundfile as sf
+import os
+import subprocess
+
+
+def convert_perf_note_types(note_mappings):
     """
-    Adjusts audio segments based on time_correction for each note and concatenates them sequentially.
-    
+    Converts the start time, pitch, and duration of performance notes to numeric types.
+
+    Args:
+        note_mappings (list): List of note mappings, each containing a "performance_note".
+
+    Returns:
+        list: Updated note_mappings with all performance note values converted to numeric types.
+    """
+    for i, mapping in enumerate(note_mappings):
+        perf_note = mapping.get("performance_note")
+        if isinstance(perf_note, dict):
+            try:
+                # Convert start_time, pitch, and duration to numeric types
+                start_time = float(perf_note.get("start", 0))
+                pitch = int(perf_note.get("pitch", 0))
+                duration = float(perf_note.get("duration", 0))
+                mapping["performance_note"] = {"start": start_time, "pitch": pitch, "duration": duration}
+                print(f"[Note {i}] Converted performance_note: {mapping['performance_note']}")
+            except (ValueError, TypeError) as e:
+                print(f"[Note {i}] Error converting performance_note: {perf_note}, Error: {e}")
+    return note_mappings
+
+
+
+import numpy as np
+import librosa
+import soundfile as sf
+import os
+from moviepy.editor import VideoFileClip, AudioFileClip
+
+def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, log_file="adjustment_log.txt"):
+    """
+    Adjusts video and audio segments based on note mappings, ensuring synchronized speed adjustments.
+
     Args:
         note_mappings (list): Mappings of performance notes with corrections (time_correction).
         audio_file (str): Path to the original performance audio file.
-        output_folder (str): Directory to save the adjusted audio.
+        video_file (str): Path to the original performance video file.
+        output_folder (str): Directory to save the adjusted audio and video.
+        log_file (str): Path to save the log of adjustments.
     """
     import numpy as np
     import librosa
     import soundfile as sf
+    from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
     import os
 
-    # Monkey patch to convert string types to numeric for performance_note
-    def convert_perf_note_types(note_mappings):
-        for mapping in note_mappings:
-            perf_note = mapping.get("performance_note")
-            if perf_note and isinstance(perf_note, tuple) and len(perf_note) >= 3:
-                try:
-                    start_time = float(perf_note[0])
-                    pitch = int(perf_note[1])
-                    duration = float(perf_note[2])
-                    mapping["performance_note"] = (start_time, pitch, duration)
-                except ValueError as e:
-                    print(f"Error converting performance_note: {perf_note}, Error: {e}")
-        return note_mappings
+    # Ensure output directory exists
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
-    # Apply the monkey patch
-    note_mappings = convert_perf_note_types(note_mappings)
+    # Open log file for writing
+    with open(log_file, "w") as log:
+        log.write("Segment Adjustment Log\n")
+        log.write("=======================\n")
 
-    try:
-        # Load the original audio file
-        y, sr = sf.read(audio_file)
-    except Exception as e:
-        raise RuntimeError(f"Error reading audio file: {e}")
-
-    if not note_mappings:
-        raise ValueError("No valid note mappings found. Ensure MIDI alignment is correct.")
-
-    # Initialize an empty list to collect adjusted audio segments
-    adjusted_audio_segments = []
-
-    for i, mapping in enumerate(note_mappings):
         try:
-            perf_note = mapping["performance_note"]
-
-            # 如果音符无效，跳过
-            if perf_note is None:
-                print(f"[Note {i}] Note deleted, skipping corresponding audio segment.")
-                continue
-
-            # 提取 performance_note 的开始时间和持续时间
-            if isinstance(perf_note, dict):
-                start_time = perf_note.get("start")
-                duration = perf_note.get("duration")
-            elif isinstance(perf_note, tuple):
-                start_time, _, duration = perf_note
-            else:
-                print(f"[Note {i}] Invalid note format: {type(perf_note)}")
-                continue
-
-            # 确保 start_time 和 duration 是数值类型
-            if not isinstance(start_time, (int, float)) or not isinstance(duration, (int, float)):
-                raise TypeError(f"[Note {i}] Start time and duration must be numeric: {perf_note}")
-
-            # 提取 time_correction
-            time_correction = mapping.get("time_correction", 1.0)  # 默认值为 1.0
-
-            # 将时间转换为采样索引
-            start_idx = librosa.time_to_samples(start_time, sr=sr)
-            end_idx = librosa.time_to_samples(start_time + duration, sr=sr)
-
-            # 检查采样索引是否有效
-            if start_idx >= end_idx or start_idx < 0 or end_idx > len(y):
-                print(f"[Note {i}] Skipping invalid segment: start_idx={start_idx}, end_idx={end_idx}")
-                continue
-
-            # 提取音频片段
-            segment = y[start_idx:end_idx]
-
-            if len(segment) == 0:
-                print(f"[Note {i}] Skipping empty segment.")
-                continue
-
-            # 调整片段速度
-            adjusted_segment = librosa.effects.time_stretch(segment, rate=1 / time_correction)
-
-            # 将调整后的片段加入结果列表
-            adjusted_audio_segments.append(adjusted_segment)
-
+            # Load the original audio and video
+            y, sr = librosa.load(audio_file, sr=None)
+            video_clip = VideoFileClip(video_file)
         except Exception as e:
-            print(f"[Note {i}] Error processing segment: {e}")
-            continue
+            raise RuntimeError(f"Error loading files: {e}")
 
-    # 无缝拼接所有片段
-    if adjusted_audio_segments:
-        adjusted_audio = np.concatenate(adjusted_audio_segments)
+        adjusted_audio_segments = []
+        adjusted_video_segments = []
 
-        # 对音频进行归一化处理，避免音量溢出
-        adjusted_audio = librosa.util.normalize(adjusted_audio)
+        # Initialize time tracker
+        current_time = 0.0
 
-        # 保存调整后的音频
-        output_audio_file = os.path.join(output_folder, "adjusted_output.wav")
-        try:
-            sf.write(output_audio_file, adjusted_audio, sr)
+        for i, mapping in enumerate(note_mappings):
+            try:
+                # Extract note information
+                perf_note = mapping.get("performance_note")
+                if not perf_note:
+                    continue
+
+                start_time = perf_note.get("start", 0)
+                duration = perf_note.get("duration", 0)
+                time_correction = mapping.get("time_correction", 1.0)
+
+                # Adjust start time to ensure synchronization
+                adjusted_start_time = max(start_time, current_time)
+                adjusted_duration = duration * time_correction
+
+                # Convert times to samples
+                start_idx = librosa.time_to_samples(start_time, sr=sr)
+                end_idx = librosa.time_to_samples(start_time + duration, sr=sr)
+
+                # Extract the corresponding audio segment
+                segment = y[start_idx:end_idx]
+                if len(segment) == 0:
+                    log.write(f"[Note {i}] Skipping empty segment.\n")
+                    continue
+
+                # Apply time stretching with pitch correction
+                adjusted_segment = librosa.effects.time_stretch(segment, rate=1 / time_correction)
+                adjusted_audio_segments.append(adjusted_segment)
+
+                # Process video segment
+                video_segment = video_clip.subclip(start_time, start_time + duration)
+                adjusted_video = video_segment.fx(vfx.speedx, factor=(1 / time_correction))
+                adjusted_video = adjusted_video.set_start(current_time)  # Align with audio
+                adjusted_start = current_time
+                adjusted_end = adjusted_video.end
+                current_time = adjusted_video.end
+                adjusted_video_segments.append(adjusted_video)
+
+                # Log the adjustments
+                log_entry = (f"Segment {i}:\n"
+                             f"  Original Start Time: {start_time:.2f}s\n"
+                             f"  Original Duration: {duration:.2f}s\n"
+                             f"  Time Correction Factor: {time_correction:.2f}\n"
+                             f"  Adjusted Start Time: {adjusted_start:.2f}s\n"
+                             f"  Adjusted End Time: {adjusted_end:.2f}s\n\n")
+                log.write(log_entry)
+                print(log_entry)
+
+            except Exception as e:
+                log.write(f"[Error] Processing segment {i}: {e}\n")
+                print(f"[Error] Processing segment {i}: {e}")
+                continue
+
+        # Combine adjusted audio
+        if adjusted_audio_segments:
+            final_audio = np.concatenate(adjusted_audio_segments)
+            final_audio = librosa.util.normalize(final_audio)
+            output_audio_file = os.path.join(output_folder, "adjusted_output.wav")
+            sf.write(output_audio_file, final_audio, sr)
+            log.write(f"Adjusted audio saved to: {output_audio_file}\n")
             print(f"Adjusted audio saved to: {output_audio_file}")
+        else:
+            raise RuntimeError("No valid audio segments to concatenate.")
+
+        # Combine adjusted video
+        if adjusted_video_segments:
+            try:
+                final_video = concatenate_videoclips(adjusted_video_segments, method="compose")
+                final_video_file = os.path.join(output_folder, "final_video.mp4")
+                final_video.write_videofile(final_video_file, codec="libx264", audio_codec="aac")
+                log.write(f"Final video saved to: {final_video_file}\n")
+                print(f"Final video saved to: {final_video_file}")
+            except Exception as e:
+                raise RuntimeError(f"Error processing video: {e}")
+        else:
+            raise RuntimeError("No valid video segments to process.")
+
+        # Overlay adjusted audio on video
+        try:
+            final_video_with_audio = os.path.join(output_folder, "final_output_with_audio.mp4")
+            video_clip = VideoFileClip(final_video_file)
+            audio_clip = AudioFileClip(output_audio_file)
+            video_clip.set_audio(audio_clip).write_videofile(final_video_with_audio, codec="libx264", audio_codec="aac")
+            log.write(f"Final video with adjusted audio saved to: {final_video_with_audio}\n")
+            print(f"Final video with adjusted audio saved to: {final_video_with_audio}")
         except Exception as e:
-            raise RuntimeError(f"Error saving adjusted audio: {e}")
-    else:
-        raise RuntimeError("No valid audio segments to concatenate.")
-
-
+            raise RuntimeError(f"Error combining video and audio: {e}")
+        
+        
 
 def show_gui_with_autofit(original_midi, performance_midi):
     """
@@ -1051,30 +1107,56 @@ def manual_note_editing(performance_midi_file):
     return note_mappings
 
 
-def process_and_visualize(audio_file, musicxml_file, output_folder, match_mode="automatic"):
+
+import os
+
+def cleanup_files(output_folder, keep_files):
+    """
+    删除指定目录下的所有文件，但保留指定的文件。
+
+    Args:
+        output_folder (str): 输出目录路径。
+        keep_files (list): 需要保留的文件路径列表。
+    """
+    for root, dirs, files in os.walk(output_folder):
+        for file in files:
+            file_path = os.path.join(root, file)
+            if file_path not in keep_files:
+                try:
+                    os.remove(file_path)
+                    print(f"Deleted temporary file: {file_path}")
+                except Exception as e:
+                    print(f"Failed to delete {file_path}: {e}")
+
+
+def process_and_visualize(video_file, musicxml_file, output_folder, match_mode="automatic"):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
     try:
-        # 1. Convert MusicXML to MIDI
+        # 1. 提取音频
+        cleaned_audio_file = os.path.join(output_folder, "cleaned_audio.wav")
+        preprocess_audio(video_file, cleaned_audio_file)
+
+        # 2. 将 MusicXML 转换为 MIDI
         musicxml_midi_file = os.path.join(output_folder, "musicxml.mid")
         musicxml_to_midi(musicxml_file, musicxml_midi_file)
 
-        # 2. Preprocess audio and extract F0
-        cleaned_audio_file = os.path.join(output_folder, "cleaned_audio.wav")
-        preprocess_audio(audio_file, cleaned_audio_file)
+        # 3. 提取 F0（音高）
         frequency, confidence = run_crepe(cleaned_audio_file)
 
-        # 3. Generate Performance MIDI
+        # 4. 生成性能 MIDI
         performance_midi_file = process(
-            freqs=frequency, conf=confidence,
+            freqs=frequency,
+            conf=confidence,
             audio_path=Path(cleaned_audio_file),
-            output_label="performance", default_sample_rate=44100
+            output_label="performance",
+            default_sample_rate=44100
         )
         performance_midi_path = os.path.join(output_folder, os.path.basename(performance_midi_file))
         os.rename(performance_midi_file, performance_midi_path)
 
-        # 4. Note Mapping Logic
+        # 5. 匹配音符并调整音频
         if match_mode == "manual":
             note_mappings = manual_note_editing(performance_midi_path)
         else:
@@ -1087,56 +1169,29 @@ def process_and_visualize(audio_file, musicxml_file, output_folder, match_mode="
             bpm = original_pm.estimate_tempo()
             note_mappings = find_matching_notes(performance_notes, original_notes, bpm)
 
-        # 5. Adjust audio segments
-        adjust_audio_segments(note_mappings, cleaned_audio_file, output_folder)
+        # 调整音频和视频片段
+        adjust_audio_segments(note_mappings, cleaned_audio_file, video_file, output_folder)
 
-        print(f"Adjusted audio saved in {output_folder}")
+        # 最终输出文件路径
+        final_adjusted_video_path = os.path.join(output_folder, "final_output_with_audio.mp4")
 
-    except Exception as e:
-        print(f"Error: {e}")
+        # 删除所有临时文件
+        temp_files = [
+            cleaned_audio_file,  # 临时提取的音频文件
+            musicxml_midi_file,  # 转换生成的 MIDI 文件
+            performance_midi_path.replace(".mid", ".onsets.npz"), 
+            os.path.join(output_folder, "adjusted_output.wav"),
+            os.path.join(output_folder, "final_video.mp4"),
+            os.path.join(output_folder, "cleaned_audio.wav"),
+        ]
 
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+                print(f"Deleted temporary file: {temp_file}")
 
-
-def process_and_visualize(audio_file, musicxml_file, output_folder, match_mode="automatic"):
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
-    try:
-        # 1. Convert MusicXML to MIDI
-        musicxml_midi_file = os.path.join(output_folder, "musicxml.mid")
-        musicxml_to_midi(musicxml_file, musicxml_midi_file)
-
-        # 2. Preprocess audio and extract F0
-        cleaned_audio_file = os.path.join(output_folder, "cleaned_audio.wav")
-        preprocess_audio(audio_file, cleaned_audio_file)
-        frequency, confidence = run_crepe(cleaned_audio_file)
-
-        # 3. Generate Performance MIDI
-        performance_midi_file = process(
-            freqs=frequency, conf=confidence,
-            audio_path=Path(cleaned_audio_file),
-            output_label="performance", default_sample_rate=44100
-        )
-        performance_midi_path = os.path.join(output_folder, os.path.basename(performance_midi_file))
-        os.rename(performance_midi_file, performance_midi_path)
-
-        # 4. Note Mapping Logic
-        if match_mode == "manual":
-            note_mappings = manual_note_editing(performance_midi_path)
-        else:
-            original_pm = pm.PrettyMIDI(musicxml_midi_file)
-            performance_pm = pm.PrettyMIDI(performance_midi_path)
-            original_notes = [(note.start, note.pitch, note.end - note.start)
-                              for inst in original_pm.instruments for note in inst.notes]
-            performance_notes = [(note.start, note.pitch, note.end - note.start)
-                                 for inst in performance_pm.instruments for note in inst.notes]
-            bpm = original_pm.estimate_tempo()
-            note_mappings = find_matching_notes(performance_notes, original_notes, bpm)
-
-        # 5. Adjust audio segments
-        adjust_audio_segments(note_mappings, cleaned_audio_file, output_folder)
-
-        print(f"Adjusted audio saved in {output_folder}")
+        print(f"Final adjusted video saved to: {final_adjusted_video_path}")
+        print(f"Performance MIDI saved to: {performance_midi_path}")
 
     except Exception as e:
         print(f"Error: {e}")
@@ -1194,3 +1249,4 @@ def start_gui():
 
 if __name__ == "__main__":
     start_gui()
+
