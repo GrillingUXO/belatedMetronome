@@ -799,33 +799,21 @@ import os
 from moviepy.editor import VideoFileClip, AudioFileClip
 
 def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, log_file="adjustment_log.txt"):
-    """
-    Adjusts video and audio segments based on note mappings, ensuring synchronized speed adjustments.
 
-    Args:
-        note_mappings (list): Mappings of performance notes with corrections (time_correction).
-        audio_file (str): Path to the original performance audio file.
-        video_file (str): Path to the original performance video file.
-        output_folder (str): Directory to save the adjusted audio and video.
-        log_file (str): Path to save the log of adjustments.
-    """
     import numpy as np
     import librosa
     import soundfile as sf
     from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
     import os
 
-    # Ensure output directory exists
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    # Open log file for writing
     with open(log_file, "w") as log:
         log.write("Segment Adjustment Log\n")
         log.write("=======================\n")
 
         try:
-            # Load the original audio and video
             y, sr = librosa.load(audio_file, sr=None)
             video_clip = VideoFileClip(video_file)
         except Exception as e:
@@ -833,88 +821,96 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
 
         adjusted_audio_segments = []
         adjusted_video_segments = []
+        gap_audio_segments = []
+        gap_video_segments = []
 
-        # Initialize time tracker
-        current_time = 0.0
+        last_end_time = 0.0 
 
         for i, mapping in enumerate(note_mappings):
             try:
-                # Extract note information
                 perf_note = mapping.get("performance_note")
                 if not perf_note:
                     continue
 
                 start_time = perf_note.get("start", 0)
                 duration = perf_note.get("duration", 0)
+                end_time = start_time + duration
                 time_correction = mapping.get("time_correction", 1.0)
 
-                # Adjust start time to ensure synchronization
-                adjusted_start_time = max(start_time, current_time)
-                adjusted_duration = duration * time_correction
+                if start_time > last_end_time:
+                    gap_start = last_end_time
+                    gap_end = start_time
+                    gap_duration = gap_end - gap_start
 
-                # Convert times to samples
-                start_idx = librosa.time_to_samples(start_time, sr=sr)
-                end_idx = librosa.time_to_samples(start_time + duration, sr=sr)
+                    if gap_duration >= 0.01: 
+                        gap_audio = y[librosa.time_to_samples(gap_start, sr=sr):librosa.time_to_samples(gap_end, sr=sr)]
+                        gap_video = video_clip.subclip(gap_start, gap_end)
 
-                # Extract the corresponding audio segment
-                segment = y[start_idx:end_idx]
-                if len(segment) == 0:
-                    log.write(f"[Note {i}] Skipping empty segment.\n")
-                    continue
+                        gap_audio_segments.append(gap_audio)
+                        gap_video_segments.append(gap_video)
 
-                # Apply time stretching with pitch correction
-                adjusted_segment = librosa.effects.time_stretch(segment, rate=1 / time_correction)
-                adjusted_audio_segments.append(adjusted_segment)
+                        log_entry = (f"Gap detected:\n"
+                                     f"  Start Time: {gap_start:.2f}s\n"
+                                     f"  End Time: {gap_end:.2f}s\n"
+                                     f"  Duration: {gap_duration:.2f}s\n\n")
+                        log.write(log_entry)
+                        print(log_entry)
 
-                # Process video segment
-                video_segment = video_clip.subclip(start_time, start_time + duration)
+                video_segment = video_clip.subclip(start_time, end_time)
                 adjusted_video = video_segment.fx(vfx.speedx, factor=(1 / time_correction))
-                adjusted_video = adjusted_video.set_start(current_time)  # Align with audio
-                adjusted_start = current_time
-                adjusted_end = adjusted_video.end
-                current_time = adjusted_video.end
+
+                start_idx = librosa.time_to_samples(start_time, sr=sr)
+                end_idx = librosa.time_to_samples(end_time, sr=sr)
+                audio_segment = y[start_idx:end_idx]
+                adjusted_audio = librosa.effects.time_stretch(audio_segment, rate=1 / time_correction)
+
+                adjusted_audio_segments.append(adjusted_audio)
                 adjusted_video_segments.append(adjusted_video)
 
-                # Log the adjustments
                 log_entry = (f"Segment {i}:\n"
                              f"  Original Start Time: {start_time:.2f}s\n"
-                             f"  Original Duration: {duration:.2f}s\n"
-                             f"  Time Correction Factor: {time_correction:.2f}\n"
-                             f"  Adjusted Start Time: {adjusted_start:.2f}s\n"
-                             f"  Adjusted End Time: {adjusted_end:.2f}s\n\n")
+                             f"  Original End Time: {end_time:.2f}s\n"
+                             f"  Duration: {duration:.2f}s\n"
+                             f"  Time Correction: {time_correction:.2f}\n\n")
                 log.write(log_entry)
                 print(log_entry)
+
+                last_end_time = end_time
 
             except Exception as e:
                 log.write(f"[Error] Processing segment {i}: {e}\n")
                 print(f"[Error] Processing segment {i}: {e}")
                 continue
 
-        # Combine adjusted audio
-        if adjusted_audio_segments:
-            final_audio = np.concatenate(adjusted_audio_segments)
+        try:
+            final_audio_segments = []
+            for audio, gap_audio in zip(adjusted_audio_segments, gap_audio_segments + [None]):
+                final_audio_segments.append(audio)
+                if gap_audio is not None:
+                    final_audio_segments.append(gap_audio)
+
+            final_audio = np.concatenate(final_audio_segments)
             final_audio = librosa.util.normalize(final_audio)
             output_audio_file = os.path.join(output_folder, "adjusted_output.wav")
             sf.write(output_audio_file, final_audio, sr)
             log.write(f"Adjusted audio saved to: {output_audio_file}\n")
             print(f"Adjusted audio saved to: {output_audio_file}")
-        else:
-            raise RuntimeError("No valid audio segments to concatenate.")
 
-        # Combine adjusted video
-        if adjusted_video_segments:
-            try:
-                final_video = concatenate_videoclips(adjusted_video_segments, method="compose")
-                final_video_file = os.path.join(output_folder, "final_video.mp4")
-                final_video.write_videofile(final_video_file, codec="libx264", audio_codec="aac")
-                log.write(f"Final video saved to: {final_video_file}\n")
-                print(f"Final video saved to: {final_video_file}")
-            except Exception as e:
-                raise RuntimeError(f"Error processing video: {e}")
-        else:
-            raise RuntimeError("No valid video segments to process.")
+            final_video_segments = []
+            for video, gap_video in zip(adjusted_video_segments, gap_video_segments + [None]):
+                final_video_segments.append(video)
+                if gap_video is not None:
+                    final_video_segments.append(gap_video)
 
-        # Overlay adjusted audio on video
+            final_video = concatenate_videoclips(final_video_segments, method="compose")
+            final_video_file = os.path.join(output_folder, "final_video.mp4")
+            final_video.write_videofile(final_video_file, codec="libx264", audio_codec="aac")
+            log.write(f"Final video saved to: {final_video_file}\n")
+            print(f"Final video saved to: {final_video_file}")
+
+        except Exception as e:
+            raise RuntimeError(f"Error during audio or video merging: {e}")
+
         try:
             final_video_with_audio = os.path.join(output_folder, "final_output_with_audio.mp4")
             video_clip = VideoFileClip(final_video_file)
@@ -925,21 +921,12 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
         except Exception as e:
             raise RuntimeError(f"Error combining video and audio: {e}")
         
-        
 
 def show_gui_with_autofit(original_midi, performance_midi):
-    """
-    在 GUI 中显示自动匹配后的结果。
 
-    Args:
-        original_midi (str): 参考 MIDI 文件路径。
-        performance_midi (str): 演奏 MIDI 文件路径。
-    """
-    # 加载 MIDI
     original_pm = pm.PrettyMIDI(original_midi)
     performance_pm = pm.PrettyMIDI(performance_midi)
 
-    # 提取音符
     original_notes = [(note.start, note.pitch, note.end - note.start)
                       for inst in original_pm.instruments for note in inst.notes]
     performance_notes = [(note.start, note.pitch, note.end - note.start)
@@ -985,35 +972,28 @@ def manual_note_editing(performance_midi_file):
     Returns:
         list: A list of note mappings with relative_offset and time_correction.
     """
-    # 加载 Performance MIDI 文件
     perf_pm = pm.PrettyMIDI(performance_midi_file)
     original_notes = [
         {"start": note.start, "pitch": note.pitch, "duration": note.end - note.start}
         for inst in perf_pm.instruments for note in inst.notes
     ]
 
-    # 创建副本供编辑
     edited_notes = original_notes.copy()
 
-    # 初始化返回值
     note_mappings = []
 
-    # 初始化 Tkinter 窗口
     root = tk.Tk()
     root.title("Manual Note Editor")
 
-    # 表格显示音符
     columns = ("Index", "Start Time", "Pitch", "Duration")
     tree = ttk.Treeview(root, columns=columns, show="headings", height=10)
     for col in columns:
         tree.heading(col, text=col)
     tree.pack(pady=10, padx=10)
 
-    # 填充表格数据
     for i, note in enumerate(original_notes):
         tree.insert("", "end", iid=i, values=(i, round(note["start"], 3), note["pitch"], round(note["duration"], 3)))
 
-    # 输入框
     ttk.Label(root, text="Start Time:").pack()
     start_entry = ttk.Entry(root)
     start_entry.pack()
@@ -1026,7 +1006,6 @@ def manual_note_editing(performance_midi_file):
     duration_entry = ttk.Entry(root)
     duration_entry.pack()
 
-    # 选中音符后填充到输入框
     def on_note_select(event):
         selected = tree.selection()
         if not selected:
@@ -1058,7 +1037,6 @@ def manual_note_editing(performance_midi_file):
         except ValueError:
             messagebox.showerror("Error", "Invalid input. Please enter numeric values.")
 
-    # 删除音符
     def delete_note():
         selected = tree.selection()
         if not selected:
@@ -1068,10 +1046,8 @@ def manual_note_editing(performance_midi_file):
         edited_notes[idx] = None
         tree.delete(idx)
 
-    # 保存修改并退出
     def confirm_changes():
-        # 计算 relative_offset 和 time_correction
-        nonlocal note_mappings  # 使用外部变量存储计算结果
+        nonlocal note_mappings 
         for original, edited in zip(original_notes, edited_notes):
             if edited is None:
                 continue
@@ -1083,7 +1059,6 @@ def manual_note_editing(performance_midi_file):
                 "time_correction": time_correction
             })
 
-        # 保存修改后的 MIDI 文件
         for inst in perf_pm.instruments:
             inst.notes.clear()
             for note in edited_notes:
@@ -1111,13 +1086,7 @@ def manual_note_editing(performance_midi_file):
 import os
 
 def cleanup_files(output_folder, keep_files):
-    """
-    删除指定目录下的所有文件，但保留指定的文件。
 
-    Args:
-        output_folder (str): 输出目录路径。
-        keep_files (list): 需要保留的文件路径列表。
-    """
     for root, dirs, files in os.walk(output_folder):
         for file in files:
             file_path = os.path.join(root, file)
@@ -1134,18 +1103,14 @@ def process_and_visualize(video_file, musicxml_file, output_folder, match_mode="
         os.makedirs(output_folder)
 
     try:
-        # 1. 提取音频
         cleaned_audio_file = os.path.join(output_folder, "cleaned_audio.wav")
         preprocess_audio(video_file, cleaned_audio_file)
 
-        # 2. 将 MusicXML 转换为 MIDI
         musicxml_midi_file = os.path.join(output_folder, "musicxml.mid")
         musicxml_to_midi(musicxml_file, musicxml_midi_file)
 
-        # 3. 提取 F0（音高）
         frequency, confidence = run_crepe(cleaned_audio_file)
 
-        # 4. 生成性能 MIDI
         performance_midi_file = process(
             freqs=frequency,
             conf=confidence,
@@ -1156,7 +1121,6 @@ def process_and_visualize(video_file, musicxml_file, output_folder, match_mode="
         performance_midi_path = os.path.join(output_folder, os.path.basename(performance_midi_file))
         os.rename(performance_midi_file, performance_midi_path)
 
-        # 5. 匹配音符并调整音频
         if match_mode == "manual":
             note_mappings = manual_note_editing(performance_midi_path)
         else:
@@ -1169,16 +1133,13 @@ def process_and_visualize(video_file, musicxml_file, output_folder, match_mode="
             bpm = original_pm.estimate_tempo()
             note_mappings = find_matching_notes(performance_notes, original_notes, bpm)
 
-        # 调整音频和视频片段
         adjust_audio_segments(note_mappings, cleaned_audio_file, video_file, output_folder)
 
-        # 最终输出文件路径
         final_adjusted_video_path = os.path.join(output_folder, "final_output_with_audio.mp4")
 
-        # 删除所有临时文件
         temp_files = [
-            cleaned_audio_file,  # 临时提取的音频文件
-            musicxml_midi_file,  # 转换生成的 MIDI 文件
+            cleaned_audio_file,
+            musicxml_midi_file,
             performance_midi_path.replace(".mid", ".onsets.npz"), 
             os.path.join(output_folder, "adjusted_output.wav"),
             os.path.join(output_folder, "final_video.mp4"),
@@ -1201,35 +1162,33 @@ def process_and_visualize(video_file, musicxml_file, output_folder, match_mode="
 
 def start_gui():
     root = tk.Tk()
-    root.title("音频和 MIDI 处理工具")
+    root.title("Belated Metronome")
 
     frame = ttk.Frame(root)
     frame.pack(pady=10, padx=10)
 
-    # 文件选择输入框
-    audio_label = ttk.Label(frame, text="选择音频文件:")
+    audio_label = ttk.Label(frame, text="select your performance audio:")
     audio_label.grid(row=0, column=0, sticky="w")
     audio_entry = ttk.Entry(frame, width=50)
     audio_entry.grid(row=0, column=1, padx=5)
-    audio_button = ttk.Button(frame, text="选择", command=lambda: select_file(audio_entry))
+    audio_button = ttk.Button(frame, text="select", command=lambda: select_file(audio_entry))
     audio_button.grid(row=0, column=2)
 
-    musicxml_label = ttk.Label(frame, text="选择 MusicXML 文件:")
+    musicxml_label = ttk.Label(frame, text="Select your reference musicXML:")
     musicxml_label.grid(row=1, column=0, sticky="w")
     musicxml_entry = ttk.Entry(frame, width=50)
     musicxml_entry.grid(row=1, column=1, padx=5)
-    musicxml_button = ttk.Button(frame, text="选择", command=lambda: select_file(musicxml_entry))
+    musicxml_button = ttk.Button(frame, text="select", command=lambda: select_file(musicxml_entry))
     musicxml_button.grid(row=1, column=2)
 
-    output_label = ttk.Label(frame, text="选择输出文件夹:")
+    output_label = ttk.Label(frame, text="Select the output folder:")
     output_label.grid(row=2, column=0, sticky="w")
     output_entry = ttk.Entry(frame, width=50)
     output_entry.grid(row=2, column=1, padx=5)
-    output_button = ttk.Button(frame, text="选择", command=lambda: select_folder(output_entry))
+    output_button = ttk.Button(frame, text="select", command=lambda: select_folder(output_entry))
     output_button.grid(row=2, column=2)
 
-    # 匹配模式选择
-    mode_label = ttk.Label(frame, text="选择匹配模式:")
+    mode_label = ttk.Label(frame, text="modes:")
     mode_label.grid(row=3, column=0, sticky="w")
     mode_combobox = ttk.Combobox(frame, values=["automatic", "manual"], state="readonly")
     mode_combobox.set("automatic")
@@ -1237,7 +1196,7 @@ def start_gui():
 
     process_button = ttk.Button(
         frame,
-        text="处理",
+        text="process",
         command=lambda: process_and_visualize(
             audio_entry.get(), musicxml_entry.get(), output_entry.get(), mode_combobox.get()
         )
