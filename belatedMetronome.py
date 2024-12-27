@@ -613,148 +613,144 @@ def correct_performance_audio(audio_file, performance_midi_file, reference_midi_
     print(f"Corrected performance audio saved to: {output_audio_file}")
 
 
-
 import numpy as np
 from scipy.spatial.distance import euclidean
 from fastdtw import fastdtw
 
 
-def calculate_relative_metrics(notes, bpm):
-    """
-    Calculates relative metrics for a list of notes based on BPM.
-
-    Args:
-        notes (list): List of notes as tuples (start_time, pitch, duration).
-        bpm (float): Beats per minute of the MIDI.
-
-    Returns:
-        list of dict: Notes with relative timing and duration metrics.
-    """
-    if not notes or bpm <= 0:
-        raise ValueError("Invalid notes list or BPM must be greater than 0.")
-
-    # Convert BPM to beat duration (seconds per beat)
-    seconds_per_beat = 60 / bpm
-
-    relative_notes = []
-    first_note_time = notes[0][0]  # Reference start time (absolute)
-
-    for i, (start_time, pitch, duration) in enumerate(notes):
-        # Calculate relative time (start time relative to the first note)
-        relative_time = (start_time - first_note_time) / seconds_per_beat
-
-        # Calculate relative duration (note duration as a fraction of a beat)
-        relative_duration = duration / seconds_per_beat
-
-        relative_notes.append({
-            "index": i,
-            "start_time": start_time,
-            "pitch": pitch,
-            "duration": duration,
-            "relative_time": relative_time,
-            "relative_duration": relative_duration
-        })
-
-    return relative_notes
-
-
-
-
-
-
-
-from tqdm import tqdm
-
 def find_matching_notes(performance_notes, reference_notes, bpm):
-    """
-    Matches performance MIDI notes to reference MIDI notes using BPM-relative timing.
-    
-    Args:
-        performance_notes (list of tuples): Performance MIDI notes as (start_time, pitch, duration).
-        reference_notes (list of tuples): Reference MIDI notes as (start_time, pitch, duration).
-        bpm (float): Beats er minute of the reference MIDI.
-
-    Returns:
-        list of dict: Matching note pairs with time and offset correction factors, including retained unmatched notes.
-    """
     if bpm <= 0:
         raise ValueError("BPM must be greater than 0.")
 
-    # Calculate relative metrics based on BPM
-    perf_rel_notes = calculate_relative_metrics(performance_notes, bpm)
-    ref_rel_notes = calculate_relative_metrics(reference_notes, bpm)
+    seconds_per_beat = 60 / bpm
+
+    def calculate_relative_metrics(notes):
+        """Calculate relative duration and relative position for each note."""
+        relative_notes = []
+        cumulative_duration = 0
+        for i, (start_time, pitch, duration) in enumerate(notes):
+            relative_duration = duration / seconds_per_beat
+            relative_position = cumulative_duration
+            cumulative_duration += relative_duration
+            relative_notes.append((i, pitch, relative_duration, relative_position))
+        return relative_notes
+
+    perf_rel_notes = calculate_relative_metrics(performance_notes)
+    ref_rel_notes = calculate_relative_metrics(reference_notes)
 
     matches = []
-    unmatched_notes = []
-    tolerance = max(0.1, 60 / (4 * bpm))  # 16th note tolerance with a minimum threshold
+    unmatched_perf_indices = set(range(len(performance_notes)))
+    unmatched_ref_indices = set(range(len(reference_notes)))
+    position_tolerance = 3  # Allowable relative position difference in beats
 
-    # First pass: Match notes using BPM-relative timing and pitch
-    for perf_note in perf_rel_notes:
-        closest_match = None
-        min_distance = float('inf')
+    def dtw_context_similarity(perf_idx, ref_idx):
+        """Compute DTW similarity score for note contexts."""
+        perf_context = perf_rel_notes[max(0, perf_idx - 1): perf_idx + 2]
+        ref_context = ref_rel_notes[max(0, ref_idx - 1): ref_idx + 2]
+        distance, _ = fastdtw(perf_context, ref_context, dist=euclidean)
+        return distance
 
-        for ref_note in ref_rel_notes:
-            if ref_note["pitch"] == perf_note["pitch"]:
-                # Compare BPM-relative timing
-                time_diff = abs(ref_note["relative_time"] - perf_note["relative_time"])
-                if time_diff <= tolerance and time_diff < min_distance:
-                    closest_match = ref_note
-                    min_distance = time_diff
+    # First matching round
+    for perf_idx, (perf_order, perf_pitch, perf_duration, perf_position) in enumerate(perf_rel_notes):
+        best_match = None
+        best_score = float('inf')
 
-        if closest_match:
-            # Calculate time correction and offset
-            time_correction = closest_match["relative_duration"] / perf_note["relative_duration"] \
-                if perf_note["relative_duration"] > 0 else 1.0
-            relative_offset = closest_match["start_time"] - perf_note["start_time"]
+        for ref_idx, (ref_order, ref_pitch, ref_duration, ref_position) in enumerate(ref_rel_notes):
+            if ref_idx not in unmatched_ref_indices:
+                continue
+            if ref_pitch != perf_pitch:
+                continue
+
+            position_diff = abs(ref_position - perf_position)
+            if position_diff > position_tolerance:
+                continue
+
+            context_score = dtw_context_similarity(perf_idx, ref_idx)  # For reference only
+            if context_score < best_score:
+                best_match = (ref_idx, ref_pitch, ref_duration, ref_position, context_score)
+                best_score = context_score
+
+        if best_match:
+            ref_idx, ref_pitch, ref_duration, ref_position, dtw_score = best_match
+            relative_offset = ref_position - perf_position
+            time_correction = ref_duration / perf_duration if perf_duration > 0 else 1.0
 
             matches.append({
-                "performance_note": perf_note,
-                "reference_note": closest_match,
+                "order": perf_order,
+                "performance_note": {
+                    "start": performance_notes[perf_idx][0],
+                    "pitch": performance_notes[perf_idx][1],
+                    "duration": performance_notes[perf_idx][2]
+                },
+                "reference_note": {
+                    "start": reference_notes[ref_idx][0],
+                    "pitch": reference_notes[ref_idx][1],
+                    "duration": reference_notes[ref_idx][2]
+                },
+                "original_relative_position": perf_position,
+                "corrected_relative_position": ref_position,
                 "time_correction": time_correction,
-                "relative_offset": relative_offset
+                "relative_offset": relative_offset,
+                "match_round": 1,
+                "dtw_score": dtw_score
             })
-        else:
-            unmatched_notes.append(perf_note)
+            unmatched_perf_indices.discard(perf_idx)
+            unmatched_ref_indices.discard(ref_idx)
 
-    # Fallback: Match unmatched notes by pitch and relative duration
-    if unmatched_notes:
-        retained_unmatched_notes = []
-        for perf_note in unmatched_notes:
-            closest_match = min(
-                ref_rel_notes,
-                key=lambda ref_note: (
-                    abs(ref_note["pitch"] - perf_note["pitch"]) +
-                    abs(ref_note["relative_duration"] - perf_note["relative_duration"])
-                ),
-                default=None
-            )
+    # Second matching round for unmatched notes
+    for perf_idx in list(unmatched_perf_indices):
+        perf_order, perf_pitch, perf_duration, perf_position = perf_rel_notes[perf_idx]
+        for ref_idx in list(unmatched_ref_indices):
+            ref_order, ref_pitch, ref_duration, ref_position = ref_rel_notes[ref_idx]
+            if perf_pitch == ref_pitch:
+                context_score = dtw_context_similarity(perf_idx, ref_idx)  # For reference only
+                time_correction = ref_duration / perf_duration if perf_duration > 0 else 1.0
+                matches.append({
+                    "order": perf_order,
+                    "performance_note": {
+                        "start": performance_notes[perf_idx][0],
+                        "pitch": performance_notes[perf_idx][1],
+                        "duration": performance_notes[perf_idx][2]
+                    },
+                    "reference_note": {
+                        "start": reference_notes[ref_idx][0],
+                        "pitch": reference_notes[ref_idx][1],
+                        "duration": reference_notes[ref_idx][2]
+                    },
+                    "original_relative_position": perf_position,
+                    "corrected_relative_position": ref_position,
+                    "time_correction": time_correction,
+                    "relative_offset": 0.0,
+                    "match_round": 2,
+                    "dtw_score": context_score
+                })
+                unmatched_perf_indices.discard(perf_idx)
+                unmatched_ref_indices.discard(ref_idx)
+                break
 
-            # Check if this note conflicts with any matched notes
-            if closest_match:
-                preceding_match = next((m for m in matches if m["performance_note"]["start_time"] < perf_note["start_time"]), None)
-                following_match = next((m for m in matches if m["performance_note"]["start_time"] > perf_note["start_time"]), None)
+    # Handle unmatched performance notes
+    for perf_idx in unmatched_perf_indices:
+        perf_order, perf_pitch, perf_duration, perf_position = perf_rel_notes[perf_idx]
+        perf_note = performance_notes[perf_idx]
+        matches.append({
+            "order": perf_order,
+            "performance_note": {
+                "start": perf_note[0],
+                "pitch": perf_note[1],
+                "duration": perf_note[2]
+            },
+            "reference_note": None,
+            "original_relative_position": perf_position,
+            "corrected_relative_position": perf_position,
+            "time_correction": 1.0,
+            "relative_offset": 0.0,
+            "match_round": "Gap",
+            "dtw_score": "N/A"
+        })
 
-                no_conflict = True
-                if preceding_match:
-                    no_conflict &= perf_note["start_time"] + perf_note["duration"] <= preceding_match["performance_note"]["start_time"]
-                if following_match:
-                    no_conflict &= perf_note["start_time"] >= following_match["performance_note"]["start_time"] + following_match["performance_note"]["duration"]
-
-                if no_conflict:
-                    retained_unmatched_notes.append(perf_note)
-
-        # Add retained unmatched notes to matches as-is
-        for note in retained_unmatched_notes:
-            matches.append({
-                "performance_note": note,
-                "reference_note": None,  # Unmatched notes won't have a reference
-                "time_correction": 1.0,  # No adjustment
-                "relative_offset": 0.0
-            })
-
-    if not matches:
-        print("Warning: No matches found. Ensure MIDI files are aligned and tempos match.")
+    matches.sort(key=lambda match: match["order"])
     return matches
+
 
 
 
@@ -792,135 +788,158 @@ def convert_perf_note_types(note_mappings):
 
 
 
+
 import numpy as np
 import librosa
 import soundfile as sf
 import os
-from moviepy.editor import VideoFileClip, AudioFileClip
+from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
+from moviepy.video.fx import speedx
 
 def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, log_file="adjustment_log.txt"):
-
-    import numpy as np
-    import librosa
-    import soundfile as sf
-    from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
-    import os
-
+    """
+    Adjusts and aligns audio and video segments based on note mappings, preserving segment order,
+    and retains gaps as original segments without time correction.
+    """
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
     with open(log_file, "w") as log:
         log.write("Segment Adjustment Log\n")
-        log.write("=======================\n")
+        log.write("=" * 50 + "\n")
 
         try:
+            # Load audio and video
             y, sr = librosa.load(audio_file, sr=None)
             video_clip = VideoFileClip(video_file)
+            log.write(f"Audio loaded: {audio_file}, Sample rate: {sr}\n")
+            log.write(f"Video loaded: {video_file}\n")
+            log.write("=" * 50 + "\n")
         except Exception as e:
             raise RuntimeError(f"Error loading files: {e}")
 
-        adjusted_audio_segments = []
-        adjusted_video_segments = []
-        gap_audio_segments = []
-        gap_video_segments = []
+        # Prepare containers
+        segments = []
+        last_end_time = 0.0
 
-        last_end_time = 0.0 
+        # Extract unmatched reference notes and full reference notes
+        all_reference_notes = [
+            mapping.get("reference_note") for mapping in note_mappings
+        ]
+        unmatched_reference_notes = [
+            mapping.get("reference_note") for mapping in note_mappings if not mapping.get("reference_note")
+        ]
 
         for i, mapping in enumerate(note_mappings):
             try:
+                # Ensure order is assigned
+                mapping["order"] = i
                 perf_note = mapping.get("performance_note")
+                ref_note = mapping.get("reference_note")
+                order = mapping["order"]
+
                 if not perf_note:
+                    log.write(f"Skipping mapping with no performance_note: Order={order}\n")
                     continue
 
-                start_time = perf_note.get("start", 0)
-                duration = perf_note.get("duration", 0)
+                # Extract timing information
+                start_time = perf_note["start"]
+                duration = perf_note["duration"]
                 end_time = start_time + duration
                 time_correction = mapping.get("time_correction", 1.0)
+                match_round = mapping.get("match_round", "N/A")
+                dtw_score = mapping.get("dtw_score", "N/A")
 
+                # Log match details
+                log.write(f"Processing Segment: Order={order}\n")
+                log.write(f"  Performance Note: Start={start_time:.2f}, Duration={duration:.2f}, Pitch={perf_note['pitch']}\n")
+                if ref_note:
+                    log.write(f"  Matched Reference Note: Start={ref_note['start']:.2f}, Duration={ref_note['duration']:.2f}, Pitch={ref_note['pitch']}\n")
+                else:
+                    log.write("  Matched Reference Note: None (Gap)\n")
+                log.write(f"  Match Round: {match_round}, DTW Score: {dtw_score}\n")
+                log.write(f"  Time Correction: {time_correction}\n")
+                log.write("-" * 50 + "\n")
+
+                # Handle gaps
                 if start_time > last_end_time:
                     gap_start = last_end_time
                     gap_end = start_time
-                    gap_duration = gap_end - gap_start
 
-                    if gap_duration >= 0.01: 
-                        gap_audio = y[librosa.time_to_samples(gap_start, sr=sr):librosa.time_to_samples(gap_end, sr=sr)]
-                        gap_video = video_clip.subclip(gap_start, gap_end)
+                    gap_audio = y[librosa.time_to_samples(gap_start, sr=sr):librosa.time_to_samples(gap_end, sr=sr)]
+                    gap_video = video_clip.subclip(gap_start, gap_end)
+                    segments.append({
+                        "type": "gap",
+                        "order": order,
+                        "audio": gap_audio,
+                        "video": gap_video
+                    })
+                    log.write(f"  Gap detected: Start={gap_start:.2f}, End={gap_end:.2f}\n")
+                    log.write("-" * 50 + "\n")
 
-                        gap_audio_segments.append(gap_audio)
-                        gap_video_segments.append(gap_video)
-
-                        log_entry = (f"Gap detected:\n"
-                                     f"  Start Time: {gap_start:.2f}s\n"
-                                     f"  End Time: {gap_end:.2f}s\n"
-                                     f"  Duration: {gap_duration:.2f}s\n\n")
-                        log.write(log_entry)
-                        print(log_entry)
+                # Process segment
+                segment_audio = y[librosa.time_to_samples(start_time, sr=sr):librosa.time_to_samples(end_time, sr=sr)]
+                adjusted_audio = librosa.effects.time_stretch(segment_audio, rate=1 / time_correction)
 
                 video_segment = video_clip.subclip(start_time, end_time)
                 adjusted_video = video_segment.fx(vfx.speedx, factor=(1 / time_correction))
 
-                start_idx = librosa.time_to_samples(start_time, sr=sr)
-                end_idx = librosa.time_to_samples(end_time, sr=sr)
-                audio_segment = y[start_idx:end_idx]
-                adjusted_audio = librosa.effects.time_stretch(audio_segment, rate=1 / time_correction)
-
-                adjusted_audio_segments.append(adjusted_audio)
-                adjusted_video_segments.append(adjusted_video)
-
-                log_entry = (f"Segment {i}:\n"
-                             f"  Original Start Time: {start_time:.2f}s\n"
-                             f"  Original End Time: {end_time:.2f}s\n"
-                             f"  Duration: {duration:.2f}s\n"
-                             f"  Time Correction: {time_correction:.2f}\n\n")
-                log.write(log_entry)
-                print(log_entry)
-
+                segments.append({
+                    "type": "segment",
+                    "order": order,
+                    "audio": adjusted_audio,
+                    "video": adjusted_video
+                })
                 last_end_time = end_time
 
             except Exception as e:
-                log.write(f"[Error] Processing segment {i}: {e}\n")
-                print(f"[Error] Processing segment {i}: {e}")
+                log.write(f"[Error] Processing segment with order {order}: {e}\n")
                 continue
 
-        try:
-            final_audio_segments = []
-            for audio, gap_audio in zip(adjusted_audio_segments, gap_audio_segments + [None]):
-                final_audio_segments.append(audio)
-                if gap_audio is not None:
-                    final_audio_segments.append(gap_audio)
+        # Ensure segments are sorted by order
+        segments = sorted(segments, key=lambda s: s["order"])
 
-            final_audio = np.concatenate(final_audio_segments)
+        try:
+            # Merge all audio segments
+            final_audio = np.concatenate([s["audio"] for s in segments])
             final_audio = librosa.util.normalize(final_audio)
             output_audio_file = os.path.join(output_folder, "adjusted_output.wav")
             sf.write(output_audio_file, final_audio, sr)
-            log.write(f"Adjusted audio saved to: {output_audio_file}\n")
-            print(f"Adjusted audio saved to: {output_audio_file}")
+            log.write(f"Audio segments merged and saved to: {output_audio_file}\n")
 
-            final_video_segments = []
-            for video, gap_video in zip(adjusted_video_segments, gap_video_segments + [None]):
-                final_video_segments.append(video)
-                if gap_video is not None:
-                    final_video_segments.append(gap_video)
-
-            final_video = concatenate_videoclips(final_video_segments, method="compose")
+            # Merge all video segments
+            final_video = concatenate_videoclips([s["video"] for s in segments], method="compose")
             final_video_file = os.path.join(output_folder, "final_video.mp4")
             final_video.write_videofile(final_video_file, codec="libx264", audio_codec="aac")
-            log.write(f"Final video saved to: {final_video_file}\n")
-            print(f"Final video saved to: {final_video_file}")
+            log.write(f"Video segments merged and saved to: {final_video_file}\n")
 
-        except Exception as e:
-            raise RuntimeError(f"Error during audio or video merging: {e}")
-
-        try:
+            # Combine final video with adjusted audio
             final_video_with_audio = os.path.join(output_folder, "final_output_with_audio.mp4")
             video_clip = VideoFileClip(final_video_file)
             audio_clip = AudioFileClip(output_audio_file)
             video_clip.set_audio(audio_clip).write_videofile(final_video_with_audio, codec="libx264", audio_codec="aac")
-            log.write(f"Final video with adjusted audio saved to: {final_video_with_audio}\n")
-            print(f"Final video with adjusted audio saved to: {final_video_with_audio}")
+            log.write(f"Final adjusted video saved to: {final_video_with_audio}\n")
+            log.write("=" * 50 + "\n")
+
+            # Log unmatched and all reference notes
+            log.write("Unmatched Reference Notes:\n")
+            if unmatched_reference_notes:
+                for ref_note in unmatched_reference_notes:
+                    log.write(f"  Reference Note: Start={ref_note['start']:.2f}, Duration={ref_note['duration']:.2f}, Pitch={ref_note['pitch']}\n")
+            else:
+                log.write("  None\n")
+            log.write("-" * 50 + "\n")
+
+            log.write("All Reference Notes:\n")
+            for ref_note in all_reference_notes:
+                if ref_note:
+                    log.write(f"  Reference Note: Start={ref_note['start']:.2f}, Duration={ref_note['duration']:.2f}, Pitch={ref_note['pitch']}\n")
+            log.write("=" * 50 + "\n")
+
         except Exception as e:
-            raise RuntimeError(f"Error combining video and audio: {e}")
-        
+            log.write(f"[Error] Error during merging: {e}\n")
+            raise RuntimeError(f"Error during merging: {e}")
+
 
 def show_gui_with_autofit(original_midi, performance_midi):
 
@@ -1208,4 +1227,5 @@ def start_gui():
 
 if __name__ == "__main__":
     start_gui()
+
 
