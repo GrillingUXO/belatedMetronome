@@ -830,6 +830,18 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
             mapping.get("reference_note") for mapping in note_mappings if not mapping.get("reference_note")
         ]
 
+        def find_nearest_zero_crossing(audio, target_index):
+            zero_crossings = np.where(np.diff(np.sign(audio)))[0]
+            nearest = zero_crossings[np.argmin(np.abs(zero_crossings - target_index))]
+            return nearest
+
+        def apply_fade(audio, fade_length=2048):
+            fade_in = np.linspace(0, 1, fade_length)
+            fade_out = np.linspace(1, 0, fade_length)
+            audio[:fade_length] *= fade_in
+            audio[-fade_length:] *= fade_out
+            return audio
+
         for i, mapping in enumerate(note_mappings):
             try:
                 # Ensure order is assigned
@@ -867,6 +879,7 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
                     gap_end = start_time
 
                     gap_audio = y[librosa.time_to_samples(gap_start, sr=sr):librosa.time_to_samples(gap_end, sr=sr)]
+                    gap_audio = apply_fade(gap_audio)
                     gap_video = video_clip.subclip(gap_start, gap_end)
                     segments.append({
                         "type": "gap",
@@ -878,8 +891,13 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
                     log.write("-" * 50 + "\n")
 
                 # Process segment
-                segment_audio = y[librosa.time_to_samples(start_time, sr=sr):librosa.time_to_samples(end_time, sr=sr)]
+                start_idx = librosa.time_to_samples(start_time, sr=sr)
+                end_idx = librosa.time_to_samples(end_time, sr=sr)
+                start_idx = find_nearest_zero_crossing(y, start_idx)
+                end_idx = find_nearest_zero_crossing(y, end_idx)
+                segment_audio = y[start_idx:end_idx]
                 adjusted_audio = librosa.effects.time_stretch(segment_audio, rate=1 / time_correction)
+                adjusted_audio = apply_fade(adjusted_audio)
 
                 video_segment = video_clip.subclip(start_time, end_time)
                 adjusted_video = video_segment.fx(vfx.speedx, factor=(1 / time_correction))
@@ -939,6 +957,7 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
         except Exception as e:
             log.write(f"[Error] Error during merging: {e}\n")
             raise RuntimeError(f"Error during merging: {e}")
+
 
 
 def show_gui_with_autofit(original_midi, performance_midi):
