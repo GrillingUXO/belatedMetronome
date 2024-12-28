@@ -253,6 +253,7 @@ def process(freqs,
     pitch_changes = np.where(raw_pitch_changes > 0.5, raw_pitch_changes, smoothed_pitch_changes)
 
 
+
     # get confidence peaks with peak widths (prominences)
     conf_peaks, conf_peak_properties = find_peaks(1 - conf,
                                                   distance=4,
