@@ -661,11 +661,21 @@ def find_matching_notes(performance_notes, reference_notes, bpm):
             if ref_pitch != perf_pitch:
                 continue
 
+            # Relative duration matching
+            duration_diff = abs(ref_duration - perf_duration)
+            duration_tolerance = 0.5 * ref_duration  # 0.5 times the reference note's relative duration
+            if duration_diff > duration_tolerance:
+                continue  # Skip if relative duration mismatch exceeds tolerance
+
+            # Relative position matching (only checked if duration match passes)
             position_diff = abs(ref_position - perf_position)
             if position_diff > position_tolerance:
                 continue
 
-            context_score = dtw_context_similarity(perf_idx, ref_idx)  # For reference only
+            # Calculate DTW context similarity (optional for fine-tuning match score)
+            context_score = dtw_context_similarity(perf_idx, ref_idx)
+
+            # Prioritize duration and position match over context similarity
             if context_score < best_score:
                 best_match = (ref_idx, ref_pitch, ref_duration, ref_position, context_score)
                 best_score = context_score
@@ -754,7 +764,6 @@ def find_matching_notes(performance_notes, reference_notes, bpm):
 
 
 
-
 import numpy as np
 import librosa
 import soundfile as sf
@@ -799,7 +808,15 @@ from moviepy.video.fx import speedx
 def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, log_file="adjustment_log.txt"):
     """
     Adjusts and aligns audio and video segments based on note mappings, preserving segment order,
-    and retains gaps as original segments without time correction.
+    applies time correction, and retains gaps as original segments without time correction.
+    For gaps between the first and last segments, the audio is sped up by 2x.
+
+    Args:
+        note_mappings (list): List of note mappings containing performance and reference note details.
+        audio_file (str): Path to the original audio file.
+        video_file (str): Path to the original video file.
+        output_folder (str): Folder to save adjusted outputs.
+        log_file (str): Path to the log file for debugging.
     """
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -821,14 +838,7 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
         # Prepare containers
         segments = []
         last_end_time = 0.0
-
-        # Extract unmatched reference notes and full reference notes
-        all_reference_notes = [
-            mapping.get("reference_note") for mapping in note_mappings
-        ]
-        unmatched_reference_notes = [
-            mapping.get("reference_note") for mapping in note_mappings if not mapping.get("reference_note")
-        ]
+        gap_processing_start = False  # Flag for processing gaps with 2x speed
 
         def find_nearest_zero_crossing(audio, target_index):
             zero_crossings = np.where(np.diff(np.sign(audio)))[0]
@@ -836,10 +846,12 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
             return nearest
 
         def apply_fade(audio, fade_length=2048):
+            fade_length = min(fade_length, len(audio))  # Dynamic fade length
             fade_in = np.linspace(0, 1, fade_length)
             fade_out = np.linspace(1, 0, fade_length)
-            audio[:fade_length] *= fade_in
-            audio[-fade_length:] *= fade_out
+            if fade_length > 0:
+                audio[:fade_length] *= fade_in
+                audio[-fade_length:] *= fade_out
             return audio
 
         for i, mapping in enumerate(note_mappings):
@@ -880,6 +892,11 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
 
                     gap_audio = y[librosa.time_to_samples(gap_start, sr=sr):librosa.time_to_samples(gap_end, sr=sr)]
                     gap_audio = apply_fade(gap_audio)
+
+                    if gap_processing_start and i < len(note_mappings) - 1:
+                        # Speed up the gap audio by 2x
+                        gap_audio = librosa.effects.time_stretch(gap_audio, rate=2.0)
+
                     gap_video = video_clip.subclip(gap_start, gap_end)
                     segments.append({
                         "type": "gap",
@@ -896,6 +913,10 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
                 start_idx = find_nearest_zero_crossing(y, start_idx)
                 end_idx = find_nearest_zero_crossing(y, end_idx)
                 segment_audio = y[start_idx:end_idx]
+
+                # Apply fade and time correction
+                if len(segment_audio) > 0:
+                    segment_audio = apply_fade(segment_audio)
                 adjusted_audio = librosa.effects.time_stretch(segment_audio, rate=1 / time_correction)
                 adjusted_audio = apply_fade(adjusted_audio)
 
@@ -908,6 +929,9 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
                     "audio": adjusted_audio,
                     "video": adjusted_video
                 })
+
+                # Mark the start of gap acceleration after the first segment
+                gap_processing_start = True
                 last_end_time = end_time
 
             except Exception as e:
@@ -937,21 +961,6 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
             audio_clip = AudioFileClip(output_audio_file)
             video_clip.set_audio(audio_clip).write_videofile(final_video_with_audio, codec="libx264", audio_codec="aac")
             log.write(f"Final adjusted video saved to: {final_video_with_audio}\n")
-            log.write("=" * 50 + "\n")
-
-            # Log unmatched and all reference notes
-            log.write("Unmatched Reference Notes:\n")
-            if unmatched_reference_notes:
-                for ref_note in unmatched_reference_notes:
-                    log.write(f"  Reference Note: Start={ref_note['start']:.2f}, Duration={ref_note['duration']:.2f}, Pitch={ref_note['pitch']}\n")
-            else:
-                log.write("  None\n")
-            log.write("-" * 50 + "\n")
-
-            log.write("All Reference Notes:\n")
-            for ref_note in all_reference_notes:
-                if ref_note:
-                    log.write(f"  Reference Note: Start={ref_note['start']:.2f}, Duration={ref_note['duration']:.2f}, Pitch={ref_note['pitch']}\n")
             log.write("=" * 50 + "\n")
 
         except Exception as e:
@@ -1119,6 +1128,73 @@ def manual_note_editing(performance_midi_file):
     root.mainloop()
     return note_mappings
 
+def visualize_dtw_3d(reference_notes, performance_notes, output_folder):
+    """
+    Visualize DTW alignment between reference and performance MIDI notes in 3D.
+
+    Args:
+        reference_notes (list): List of tuples (start_time, pitch, duration) for reference notes.
+        performance_notes (list): List of tuples (start_time, pitch, duration) for performance notes.
+        output_folder (str): Folder to save the visualization output.
+    """
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+    from scipy.spatial.distance import euclidean
+    from fastdtw import fastdtw
+    import numpy as np
+    import os
+
+    # Prepare data
+    ref_times = np.array([note[0] for note in reference_notes])
+    ref_pitches = np.array([note[1] for note in reference_notes])
+    ref_durations = np.array([note[2] for note in reference_notes])
+    
+    perf_times = np.array([note[0] for note in performance_notes])
+    perf_pitches = np.array([note[1] for note in performance_notes])
+    perf_durations = np.array([note[2] for note in performance_notes])
+
+    # Create 2D matrices for DTW
+    ref_matrix = np.column_stack((ref_pitches, ref_durations))
+    perf_matrix = np.column_stack((perf_pitches, perf_durations))
+    
+    # Compute DTW and alignment path
+    distance, path = fastdtw(ref_matrix, perf_matrix, dist=euclidean)
+    ref_path, perf_path = zip(*path)
+
+    # Plot 3D visualization
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot reference notes
+    ax.scatter(ref_times, ref_pitches, ref_durations, color='blue', label='Reference Notes')
+    ax.plot(ref_times, ref_pitches, ref_durations, color='blue', alpha=0.5)
+
+    # Plot performance notes
+    ax.scatter(perf_times, perf_pitches, perf_durations, color='red', label='Performance Notes')
+    ax.plot(perf_times, perf_pitches, perf_durations, color='red', alpha=0.5)
+
+    # Highlight DTW alignment path
+    for r_idx, p_idx in path:
+        ax.plot(
+            [ref_times[r_idx], perf_times[p_idx]],
+            [ref_pitches[r_idx], perf_pitches[p_idx]],
+            [ref_durations[r_idx], perf_durations[p_idx]],
+            color='green',
+            alpha=0.7
+        )
+
+    # Add labels and legend
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Pitch")
+    ax.set_zlabel("Duration (s)")
+    ax.set_title("DTW Alignment Between Reference and Performance MIDI Notes")
+    ax.legend()
+
+    # Save the figure
+    output_path = os.path.join(output_folder, "dtw_visualization_3d.png")
+    plt.savefig(output_path)
+    plt.close(fig)
+    print(f"DTW visualization saved to: {output_path}")
 
 
 import os
@@ -1159,42 +1235,25 @@ def process_and_visualize(video_file, musicxml_file, output_folder, match_mode="
         performance_midi_path = os.path.join(output_folder, os.path.basename(performance_midi_file))
         os.rename(performance_midi_file, performance_midi_path)
 
+        original_pm = pm.PrettyMIDI(musicxml_midi_file)
+        performance_pm = pm.PrettyMIDI(performance_midi_path)
+        original_notes = [(note.start, note.pitch, note.end - note.start)
+                          for inst in original_pm.instruments for note in inst.notes]
+        performance_notes = [(note.start, note.pitch, note.end - note.start)
+                             for inst in performance_pm.instruments for note in inst.notes]
+        
+        visualize_dtw_3d(original_notes, performance_notes, output_folder)
+
         if match_mode == "manual":
             note_mappings = manual_note_editing(performance_midi_path)
         else:
-            original_pm = pm.PrettyMIDI(musicxml_midi_file)
-            performance_pm = pm.PrettyMIDI(performance_midi_path)
-            original_notes = [(note.start, note.pitch, note.end - note.start)
-                              for inst in original_pm.instruments for note in inst.notes]
-            performance_notes = [(note.start, note.pitch, note.end - note.start)
-                                 for inst in performance_pm.instruments for note in inst.notes]
             bpm = original_pm.estimate_tempo()
             note_mappings = find_matching_notes(performance_notes, original_notes, bpm)
 
         adjust_audio_segments(note_mappings, cleaned_audio_file, video_file, output_folder)
 
-        final_adjusted_video_path = os.path.join(output_folder, "final_output_with_audio.mp4")
-
-        temp_files = [
-            cleaned_audio_file,
-            musicxml_midi_file,
-            performance_midi_path.replace(".mid", ".onsets.npz"), 
-            os.path.join(output_folder, "adjusted_output.wav"),
-            os.path.join(output_folder, "final_video.mp4"),
-            os.path.join(output_folder, "cleaned_audio.wav"),
-        ]
-
-        for temp_file in temp_files:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-                print(f"Deleted temporary file: {temp_file}")
-
-        print(f"Final adjusted video saved to: {final_adjusted_video_path}")
-        print(f"Performance MIDI saved to: {performance_midi_path}")
-
     except Exception as e:
         print(f"Error: {e}")
-
 
 
 
