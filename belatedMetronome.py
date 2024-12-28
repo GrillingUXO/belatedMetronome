@@ -26,7 +26,7 @@ from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
 import ffmpeg
 from moviepy.video.fx import all as vfx
 from moviepy.video.fx.speedx import speedx
-
+from scipy.ndimage import gaussian_filter1d
 
 
 #Preprocess functions
@@ -193,7 +193,7 @@ def process(freqs,
             conf,
             audio_path,
             output_label="transcription",
-            sensitivity=0.001,
+            sensitivity=0.0005,
             use_smoothing=False,
             min_duration=0.03,
             min_velocity=6,
@@ -248,10 +248,10 @@ def process(freqs,
 
     # get pitch gradient
     midi_pitch = freqs_to_midi(freqs, tuning_offset)
-    pitch_changes = np.abs(np.gradient(midi_pitch))
-    pitch_changes = np.interp(pitch_changes,
-                              (pitch_changes.min(), pitch_changes.max()),
-                              (0, 1))
+    raw_pitch_changes = np.abs(np.gradient(midi_pitch))
+    smoothed_pitch_changes = gaussian_filter1d(raw_pitch_changes, sigma=1)
+    pitch_changes = np.where(raw_pitch_changes > 0.5, raw_pitch_changes, smoothed_pitch_changes)
+
 
     # get confidence peaks with peak widths (prominences)
     conf_peaks, conf_peak_properties = find_peaks(1 - conf,
@@ -266,7 +266,7 @@ def process(freqs,
     peaks, peak_properties = find_peaks(change_point_signal,
                                         distance=4,
                                         prominence=sensitivity)
-    _, _, transition_starts, transition_ends = peak_widths(change_point_signal, peaks, rel_height=0.5)
+    _, _, transition_starts, transition_ends = peak_widths(change_point_signal, peaks, rel_height=0.7)
     transition_starts = list(map(int, np.round(transition_starts)))
     transition_ends = list(map(int, np.round(transition_ends)))
 
@@ -468,7 +468,6 @@ def process(freqs,
     record_audio_midi_mapping(timed_output_notes, sr, output_folder, output_label="audio_midi_mapping")
 
     return f"{output_filename}.{output_label}.mid"
-
     
 #Adjust functions#########################################
 
