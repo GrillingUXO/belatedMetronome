@@ -1128,22 +1128,20 @@ def manual_note_editing(performance_midi_file):
     root.mainloop()
     return note_mappings
 
-def visualize_dtw_3d(reference_notes, performance_notes, output_folder):
+import plotly.graph_objects as go
+import numpy as np
+from scipy.spatial.distance import euclidean
+from fastdtw import fastdtw
+
+def visualize_dtw_3d_interactive(reference_notes, performance_notes, output_html="dtw_visualization_3d.html"):
     """
-    Visualize DTW alignment between reference and performance MIDI notes in 3D.
+    Interactive 3D visualization of DTW alignment between reference and performance MIDI notes.
 
     Args:
         reference_notes (list): List of tuples (start_time, pitch, duration) for reference notes.
         performance_notes (list): List of tuples (start_time, pitch, duration) for performance notes.
-        output_folder (str): Folder to save the visualization output.
+        output_html (str): Path to save the interactive HTML visualization.
     """
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D
-    from scipy.spatial.distance import euclidean
-    from fastdtw import fastdtw
-    import numpy as np
-    import os
-
     # Prepare data
     ref_times = np.array([note[0] for note in reference_notes])
     ref_pitches = np.array([note[1] for note in reference_notes])
@@ -1161,40 +1159,52 @@ def visualize_dtw_3d(reference_notes, performance_notes, output_folder):
     distance, path = fastdtw(ref_matrix, perf_matrix, dist=euclidean)
     ref_path, perf_path = zip(*path)
 
-    # Plot 3D visualization
-    fig = plt.figure(figsize=(12, 8))
-    ax = fig.add_subplot(111, projection='3d')
+    # Create 3D scatter plot
+    fig = go.Figure()
 
-    # Plot reference notes
-    ax.scatter(ref_times, ref_pitches, ref_durations, color='blue', label='Reference Notes')
-    ax.plot(ref_times, ref_pitches, ref_durations, color='blue', alpha=0.5)
+    # Add reference notes
+    fig.add_trace(go.Scatter3d(
+        x=ref_times, y=ref_pitches, z=ref_durations,
+        mode='markers+lines',
+        marker=dict(size=5, color='blue'),
+        line=dict(color='blue'),
+        name='Reference Notes'
+    ))
 
-    # Plot performance notes
-    ax.scatter(perf_times, perf_pitches, perf_durations, color='red', label='Performance Notes')
-    ax.plot(perf_times, perf_pitches, perf_durations, color='red', alpha=0.5)
+    # Add performance notes
+    fig.add_trace(go.Scatter3d(
+        x=perf_times, y=perf_pitches, z=perf_durations,
+        mode='markers+lines',
+        marker=dict(size=5, color='red'),
+        line=dict(color='red'),
+        name='Performance Notes'
+    ))
 
-    # Highlight DTW alignment path
+    # Add DTW alignment lines
     for r_idx, p_idx in path:
-        ax.plot(
-            [ref_times[r_idx], perf_times[p_idx]],
-            [ref_pitches[r_idx], perf_pitches[p_idx]],
-            [ref_durations[r_idx], perf_durations[p_idx]],
-            color='green',
-            alpha=0.7
-        )
+        fig.add_trace(go.Scatter3d(
+            x=[ref_times[r_idx], perf_times[p_idx]],
+            y=[ref_pitches[r_idx], perf_pitches[p_idx]],
+            z=[ref_durations[r_idx], perf_durations[p_idx]],
+            mode='lines',
+            line=dict(color='green', width=2),
+            showlegend=False
+        ))
 
-    # Add labels and legend
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Pitch")
-    ax.set_zlabel("Duration (s)")
-    ax.set_title("DTW Alignment Between Reference and Performance MIDI Notes")
-    ax.legend()
+    # Update layout
+    fig.update_layout(
+        scene=dict(
+            xaxis_title='Time (s)',
+            yaxis_title='Pitch',
+            zaxis_title='Duration (s)',
+        ),
+        title="DTW Alignment Between Reference and Performance MIDI Notes",
+        showlegend=True
+    )
 
-    # Save the figure
-    output_path = os.path.join(output_folder, "dtw_visualization_3d.png")
-    plt.savefig(output_path)
-    plt.close(fig)
-    print(f"DTW visualization saved to: {output_path}")
+    # Save interactive plot as an HTML file
+    fig.write_html(output_html)
+    print(f"Interactive DTW visualization saved to: {output_html}")
 
 
 import os
@@ -1242,7 +1252,7 @@ def process_and_visualize(video_file, musicxml_file, output_folder, match_mode="
         performance_notes = [(note.start, note.pitch, note.end - note.start)
                              for inst in performance_pm.instruments for note in inst.notes]
         
-        visualize_dtw_3d(original_notes, performance_notes, output_folder)
+        visualize_dtw_3d_interactive(original_notes, performance_notes, os.path.join(output_folder, "dtw_visualization_3d.html"))
 
         if match_mode == "manual":
             note_mappings = manual_note_editing(performance_midi_path)
@@ -1254,7 +1264,6 @@ def process_and_visualize(video_file, musicxml_file, output_folder, match_mode="
 
     except Exception as e:
         print(f"Error: {e}")
-
 
 
 def start_gui():
