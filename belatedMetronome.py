@@ -514,8 +514,6 @@ def record_audio_midi_mapping(output_notes, sr, output_folder, output_label="aud
     return mapping_file_path
 
 
-
-
 def process_with_adjustments(audio_path, reference_midi_path, output_folder):
     # Generate performance MIDI (existing logic)
     performance_midi_file = process(
@@ -533,83 +531,9 @@ def process_with_adjustments(audio_path, reference_midi_path, output_folder):
         os.rename(performance_midi_path, final_midi_path)
         performance_midi_file = str(final_midi_path)
 
-    # Correct performance audio
-    output_audio_file = os.path.join(output_folder, "corrected_performance_audio.wav")
-    correct_performance_audio(audio_path, performance_midi_file, reference_midi_path, output_audio_file)
-
-
-
-def correct_performance_audio(audio_file, performance_midi_file, reference_midi_file, output_audio_file):
-    """
-    Matches notes between performance and reference MIDI, adjusts performance audio
-    based on correction factors, and outputs the improved performance audio.
-    """
-    # Load performance and reference MIDI files
-    perf_pm = pm.PrettyMIDI(performance_midi_file)
-    ref_pm = pm.PrettyMIDI(reference_midi_file)
-
-    # Extract notes (start_time, pitch, duration)
-    performance_notes = [(note.start, note.pitch, note.end - note.start)
-                         for inst in perf_pm.instruments for note in inst.notes]
-    reference_notes = [(note.start, note.pitch, note.end - note.start)
-                       for inst in ref_pm.instruments for note in inst.notes]
-
-    # Match notes between performance and reference MIDI
-    note_mappings = []
-    for perf_note in performance_notes:
-        perf_start, perf_pitch, perf_duration = perf_note
-        closest_ref_note = min(
-            reference_notes,
-            key=lambda ref_note: abs(ref_note[0] - perf_start) + abs(ref_note[1] - perf_pitch)
-        )
-        ref_start, ref_pitch, ref_duration = closest_ref_note
-
-        # Calculate correction factors
-        time_correction = ref_duration / perf_duration if perf_duration > 0 else 1.0
-        relative_offset = (ref_start - reference_notes[0][0]) - (perf_start - performance_notes[0][0])
-
-        # Store the mapping and correction factors
-        note_mappings.append({
-            "performance_note": perf_note,
-            "reference_note": closest_ref_note,
-            "time_correction": time_correction,
-            "relative_offset": relative_offset
-        })
-
-    # Load the performance audio
-    y, sr = librosa.load(audio_file, sr=None)
-    corrected_audio = np.zeros_like(y)
-
-    # Correct each audio segment corresponding to a performance note
-    for mapping in note_mappings:
-        perf_note = mapping["performance_note"]
-        time_correction = mapping["time_correction"]
-        relative_offset = mapping["relative_offset"]
-
-        # Locate the audio segment
-        perf_start_idx = librosa.time_to_samples(perf_note[0], sr)
-        perf_end_idx = librosa.time_to_samples(perf_note[0] + perf_note[2], sr)
-        segment = y[perf_start_idx:perf_end_idx]
-
-        # Adjust segment timing
-        adjusted_segment = librosa.effects.time_stretch(segment, rate=1/time_correction)
-
-        # Calculate start position for corrected audio (applying offset)
-        corrected_start_idx = int(perf_start_idx + relative_offset * sr)
-        corrected_end_idx = corrected_start_idx + len(adjusted_segment)
-
-        # Add the adjusted segment to the corrected audio
-        if corrected_end_idx <= len(corrected_audio):  # Ensure no overflow
-            corrected_audio[corrected_start_idx:corrected_end_idx] += adjusted_segment
-        else:
-            corrected_audio[corrected_start_idx:] += adjusted_segment[:len(corrected_audio) - corrected_start_idx]
-
-    # Normalize corrected audio to prevent clipping
-    corrected_audio = librosa.util.normalize(corrected_audio)
-
-    # Save the corrected audio file
-    sf.write(output_audio_file, corrected_audio, sr)
-    print(f"Corrected performance audio saved to: {output_audio_file}")
+    # Adjust audio based on note mappings
+    note_mappings = find_matching_notes(performance_notes, reference_notes, bpm)
+    adjust_audio_segments(note_mappings, audio_path, video_file, output_folder)
 
 
 import numpy as np
@@ -1313,5 +1237,3 @@ def start_gui():
 
 if __name__ == "__main__":
     start_gui()
-
-
