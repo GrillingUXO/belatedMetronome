@@ -821,7 +821,7 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
                         # Speed up the gap audio by 2x
                         gap_audio = librosa.effects.time_stretch(gap_audio, rate=2.0)
 
-                    gap_video = video_clip.subclip(gap_start, gap_end)
+                    gap_video = video_clip.subclip(gap_start, gap_end).fx(speedx, factor=2)
                     segments.append({
                         "type": "gap",
                         "order": order,
