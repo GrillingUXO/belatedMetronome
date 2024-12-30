@@ -755,7 +755,7 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
                 raise ValueError("Audio is not stereo or was incorrectly loaded.")
             video_clip = VideoFileClip(video_file)
             log.write(f"Audio loaded: {audio_file}, Sample rate: {sr}, Channels: {y.shape[0]}\n")
-            log.write(f"Video loaded: {video_file}\n")
+            log.write(f"Video loaded: {video_file}, Duration: {video_clip.duration:.2f} seconds\n")
             log.write("=" * 50 + "\n")
         except Exception as e:
             raise RuntimeError(f"Error loading files: {e}")
@@ -764,39 +764,9 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
         segments = []
         last_end_time = 0.0
 
-        def find_nearest_zero_crossing(audio, target_index):
-            zero_crossings = np.where(np.diff(np.sign(audio)))[0]
-            nearest = zero_crossings[np.argmin(np.abs(zero_crossings - target_index))]
-            return nearest
-
-        def cross_fade(audio1, audio2, fade_length):
-            """Smoothly transitions between two audio segments using a crossfade."""
-            fade_length = min(fade_length, len(audio1), len(audio2))
-            fade_in = np.linspace(0, 1, fade_length)
-            fade_out = np.linspace(1, 0, fade_length)
-
-            cross_faded_audio = np.zeros(fade_length)
-            cross_faded_audio[:fade_length] = audio1[:fade_length] * fade_out + audio2[:fade_length] * fade_in
-
-            return cross_faded_audio
-
-        def smooth_transition(audio1, audio2, overlap=2048):
-            """Performs crossfade smoothing at the boundary of two audio segments."""
-            if audio1.size == 0 or audio2.size == 0:
-                raise ValueError("One of the audio segments is empty during transition.")
-
-            if overlap > min(len(audio1), len(audio2)):
-                overlap = min(len(audio1), len(audio2))  # Adjust overlap to avoid exceeding bounds
-
-            if overlap > 0:
-                smoothed_audio = np.concatenate((
-                    audio1[:-overlap],
-                    cross_fade(audio1[-overlap:], audio2[:overlap], overlap),
-                    audio2[overlap:]
-                ), axis=0)
-            else:
-                smoothed_audio = np.concatenate((audio1, audio2), axis=0)
-            return smoothed_audio
+        def annotate_with_timestamp(video_clip, position=(10, 10), font_size=24, color='white'):
+            """Annotates the video with timestamps for debugging and verification."""
+            return video_clip.fl_time(lambda t: t).fx(vfx.text, lambda t: f"Time: {t:.2f}s", position=position, fontsize=font_size, color=color)
 
         for i, mapping in enumerate(note_mappings):
             try:
@@ -829,50 +799,24 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
                 log.write(f"  Time Correction: {time_correction}\n")
                 log.write("-" * 50 + "\n")
 
-                # Handle gaps
-                if start_time > last_end_time:
-                    gap_start = last_end_time
-                    gap_end = start_time
-
-                    gap_audio = y[:, librosa.time_to_samples(gap_start, sr=sr):librosa.time_to_samples(gap_end, sr=sr)]
-                    log.write(f"  Gap Audio: Start={gap_start:.2f}, End={gap_end:.2f}, Length={gap_audio.shape[1]} samples\n")
-
-                    gap_video = video_clip.subclip(gap_start, gap_end)
-                    log.write(f"  Gap Video: Start={gap_start:.2f}, End={gap_end:.2f}, Duration={gap_end - gap_start:.2f} seconds\n")
-                    segments.append({
-                        "type": "gap",
-                        "order": order,
-                        "audio": gap_audio,
-                        "video": gap_video
-                    })
-
-                # Process segment
-                start_idx = librosa.time_to_samples(start_time, sr=sr)
-                end_idx = librosa.time_to_samples(end_time, sr=sr)
-                start_idx = find_nearest_zero_crossing(y[0], start_idx)  # Use left channel for zero crossing
-                end_idx = find_nearest_zero_crossing(y[0], end_idx)
-                segment_audio = y[:, start_idx:end_idx]
-                log.write(f"  Original Segment Audio: Start Index={start_idx}, End Index={end_idx}, Length={end_idx - start_idx} samples\n")
-
-                # Apply time correction for both channels without fade
-                adjusted_audio = np.stack([
-                    librosa.effects.time_stretch(segment_audio[0], rate=1 / time_correction),
-                    librosa.effects.time_stretch(segment_audio[1], rate=1 / time_correction)
-                ])
-                log.write(f"  Adjusted Segment Audio: Time Correction={time_correction}, Length={adjusted_audio.shape[1]} samples\n")
-
+                # Adjust the segment
+                adjusted_start = last_end_time
+                adjusted_end = adjusted_start + duration * time_correction
                 video_segment = video_clip.subclip(start_time, end_time)
-                adjusted_video = video_segment.fx(vfx.speedx, factor=(1 / time_correction))
-                log.write(f"  Adjusted Segment Video: Start={start_time:.2f}, End={end_time:.2f}, Duration={end_time - start_time:.2f} seconds\n")
+                video_segment = video_segment.fx(vfx.speedx, factor=(1 / time_correction))
+                video_segment = annotate_with_timestamp(video_segment)
+
+                log.write(f"  Adjusted Segment Video: Start={adjusted_start:.2f}, End={adjusted_end:.2f}, Duration={adjusted_end - adjusted_start:.2f} seconds\n")
 
                 segments.append({
                     "type": "segment",
                     "order": order,
-                    "audio": adjusted_audio,
-                    "video": adjusted_video
+                    "video": video_segment,
+                    "start": adjusted_start,
+                    "end": adjusted_end
                 })
 
-                last_end_time = end_time
+                last_end_time = adjusted_end
 
             except Exception as e:
                 log.write(f"[Error] Processing segment with order {order}: {e}\n")
@@ -882,48 +826,32 @@ def adjust_audio_segments(note_mappings, audio_file, video_file, output_folder, 
         segments = sorted(segments, key=lambda s: s["order"])
 
         try:
-            # Merge all audio segments (stereo)
-            if not segments:
-                raise RuntimeError("No segments found to merge.")
-
-            final_audio = segments[0]["audio"]
-            for idx in range(1, len(segments)):
-                try:
-                    if segments[idx]["audio"].size == 0:
-                        log.write(f"Skipping empty audio segment at index {idx}.")
-                        continue
-                    final_audio = np.stack([
-                        smooth_transition(final_audio[0], segments[idx]["audio"][0]),
-                        smooth_transition(final_audio[1], segments[idx]["audio"][1])
-                    ])
-                except ValueError as ve:
-                    log.write(f"[Error] ValueError during merging audio segments at index {idx}: {ve}\n")
-                    continue
-                except Exception as e:
-                    log.write(f"[Error] Unexpected error during merging audio segments at index {idx}: {e}\n")
-                    continue
-
-            output_audio_file = os.path.join(output_folder, "adjusted_output.wav")
-            sf.write(output_audio_file, final_audio.T, sr)  # Save stereo audio
-            log.write(f"Audio segments merged and saved to: {output_audio_file}\n")
-
             # Merge all video segments
-            final_video = concatenate_videoclips([s["video"] for s in segments], method="compose")
+            final_video_clips = []
+
+            for idx, segment in enumerate(segments):
+                try:
+                    video_clip = segment["video"]
+                    final_video_clips.append(video_clip)
+                except Exception as e:
+                    log.write(f"[Error] Unexpected error during merging video segments at index {idx}: {e}\n")
+                    continue
+
+            final_video = concatenate_videoclips(final_video_clips, method="compose")
             final_video_file = os.path.join(output_folder, "final_video.mp4")
             final_video.write_videofile(final_video_file, codec="libx264", audio_codec="aac")
             log.write(f"Video segments merged and saved to: {final_video_file}\n")
 
-            # Combine final video with adjusted audio
-            final_video_with_audio = os.path.join(output_folder, "final_output_with_audio.mp4")
-            video_clip = VideoFileClip(final_video_file)
-            audio_clip = AudioFileClip(output_audio_file)
-            video_clip.set_audio(audio_clip).write_videofile(final_video_with_audio, codec="libx264", audio_codec="aac")
-            log.write(f"Final adjusted video saved to: {final_video_with_audio}\n")
-            log.write("=" * 50 + "\n")
+            # Annotate final video with timestamps
+            final_video = annotate_with_timestamp(VideoFileClip(final_video_file))
+            annotated_video_file = os.path.join(output_folder, "final_video_annotated.mp4")
+            final_video.write_videofile(annotated_video_file, codec="libx264", audio_codec="aac")
+            log.write(f"Final annotated video saved to: {annotated_video_file}\n")
 
         except Exception as e:
             log.write(f"[Error] Error during merging: {e}\n")
             raise RuntimeError(f"Error during merging: {e}")
+
 
 
 
