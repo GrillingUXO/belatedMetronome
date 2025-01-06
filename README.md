@@ -21,14 +21,18 @@ Extracts note information using Crepe and cuts audio/video based on note boundar
 
 
 
-未修正的演奏音频。
+
+
+
+
+未修正的演奏音频：
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 1 42 48 PM" src="https://github.com/user-attachments/assets/78d321e0-4f38-4c31-967a-b443cb842179" />
 
 
 
 
-dtw匹配示例
+dtw匹配示例：
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 4 06 55 PM" src="https://github.com/user-attachments/assets/7bb5719e-53b9-4e0c-9e16-e966b02e09c5" />
 
@@ -37,7 +41,7 @@ dtw匹配示例
 
 
 
-修正后的演奏音频。稳态高能段（音符）的相对时值和参考midi完全一致
+修正后的演奏音频。稳态高能段（音符）的相对时值和参考midi完全一致：
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 1 43 30 PM" src="https://github.com/user-attachments/assets/9fa99a15-a156-4516-9aa8-16eccd5524d9" />
 
