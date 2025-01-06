@@ -35,9 +35,10 @@ Recommended for complex sheet music or where precise customization is required.
 
 
 
-转换后的演奏midi（音符列表记录的信息为64位双精度浮点数，制谱软件的渲染规则不代表最终精度）：
+转换后的演奏midi列表：
 
-<img width="944" alt="Screen Shot 2025-01-06 at 5 15 50 PM" src="https://github.com/user-attachments/assets/2c04ef3c-303e-414c-b688-9afe37ee5306" />
+<img width="932" alt="Screen Shot 2025-01-06 at 5 25 02 PM" src="https://github.com/user-attachments/assets/8003da00-676a-4b36-bb54-465645a2fe0c" />
+
 
 
 
