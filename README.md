@@ -21,12 +21,12 @@ Extracts note information using Crepe and cuts audio/video based on note boundar
 
 
 
-#未修正的演奏音频。稳态高能段（音符）的长度混乱
+未修正的演奏音频。稳态高能段（音符）的长度混乱
 <img width="1280" alt="Screen Shot 2025-01-06 at 1 42 48 PM" src="https://github.com/user-attachments/assets/78d321e0-4f38-4c31-967a-b443cb842179" />
 
 
 
-#修正后的演奏音频。音符长度完全和参考midi一致
+修正后的演奏音频。音符长度完全和参考midi一致
 <img width="1280" alt="Screen Shot 2025-01-06 at 1 43 30 PM" src="https://github.com/user-attachments/assets/9fa99a15-a156-4516-9aa8-16eccd5524d9" />
 
 
