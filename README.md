@@ -28,7 +28,7 @@ Extracts note information using Crepe and cuts audio/video based on note boundar
 
 
 
-dtw匹配示例。
+dtw匹配示例
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 4 06 55 PM" src="https://github.com/user-attachments/assets/7bb5719e-53b9-4e0c-9e16-e966b02e09c5" />
 
