@@ -1,5 +1,5 @@
 # belatedMetronome
-Belated Metronome
+
 A highly highly accurate video beat correction system based on Crepe notes.
 
 This program provides both an automatic mode (using midi for alignment) and a manual mode (via GUI) for adjusting the timing of notes in performance videos. Users can fine-tune the alignment by stretching or contracting the timing of both audio and video to match a reference.
