@@ -35,7 +35,7 @@ Recommended for complex sheet music or where precise customization is required.
 
 
 
-转换后的演奏midi列表：
+转换后的演奏midi列表（实际精度为64位双精度浮点数）：
 
 <img width="932" alt="Screen Shot 2025-01-06 at 5 25 02 PM" src="https://github.com/user-attachments/assets/8003da00-676a-4b36-bb54-465645a2fe0c" />
 
@@ -59,7 +59,7 @@ dtw匹配示例：
 
 
 
-修正后的演奏音频。稳态高能段（音符）的相对时值和参考midi完全一致：
+修正后的演奏音频。稳态高能段（音符）的相对时值和参考midi完全一致。拼接处经过交叉渐变处理以平衡听感：
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 1 43 30 PM" src="https://github.com/user-attachments/assets/9fa99a15-a156-4516-9aa8-16eccd5524d9" />
 
