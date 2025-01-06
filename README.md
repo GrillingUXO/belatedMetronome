@@ -33,14 +33,19 @@ Recommended for complex sheet music or where precise customization is required.
 <img width="1280" alt="Screen Shot 2025-01-06 at 1 42 48 PM" src="https://github.com/user-attachments/assets/78d321e0-4f38-4c31-967a-b443cb842179" />
 
 
-转换后的midi（原演奏音频变速了，所以后半段有些混乱）：
+
+
+转换后的演奏midi（音符列表记录的信息为64位双精度浮点数，制谱软件的渲染规则不代表最终精度）：
 
 <img width="944" alt="Screen Shot 2025-01-06 at 5 15 50 PM" src="https://github.com/user-attachments/assets/2c04ef3c-303e-414c-b688-9afe37ee5306" />
+
+
 
 
 原曲参考midi：
 
 <img width="933" alt="Screen Shot 2025-01-06 at 5 18 20 PM" src="https://github.com/user-attachments/assets/96c07468-ba89-41b4-8edc-2eef09890088" />
+
 
 
 
