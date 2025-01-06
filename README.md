@@ -82,12 +82,12 @@ corrected_audio = np.stack([
     librosa.effects.time_stretch(segment_audio[1], rate=1 / adjusted_time_correction)
 ])
 
+'''
 
 
 
 
-
-修正后的演奏音频。稳态高能段（音符）的相对时值和参考midi完全一致。拼接处经过交叉渐变处理以平衡听感：
+-修正后的演奏音频。稳态高能段（音符）的相对时值和参考midi完全一致。拼接处经过交叉渐变处理以平衡听感：
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 1 43 30 PM" src="https://github.com/user-attachments/assets/9fa99a15-a156-4516-9aa8-16eccd5524d9" />
 
