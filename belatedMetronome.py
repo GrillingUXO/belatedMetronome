@@ -4,7 +4,6 @@ import os
 import numpy as np
 np.float = float  # 🐒
 import soundfile as sf
-from scipy.signal import resample, find_peaks
 from scipy.io import wavfile
 from pathlib import Path
 from music21 import converter
