@@ -536,7 +536,6 @@ def process_with_adjustments(audio_path, reference_midi_path, output_folder):
     adjust_audio_segments(note_mappings, audio_path, video_file, output_folder)
 
 
-import numpy as np
 from scipy.spatial.distance import euclidean
 from fastdtw import fastdtw
 
@@ -686,14 +685,6 @@ def find_matching_notes(performance_notes, reference_notes, bpm):
 
 
 
-
-import numpy as np
-import librosa
-import soundfile as sf
-import os
-import subprocess
-
-
 def convert_perf_note_types(note_mappings):
     """
     Converts the start time, pitch, and duration of performance notes to numeric types.
@@ -720,14 +711,6 @@ def convert_perf_note_types(note_mappings):
 
 
 
-import numpy as np
-import librosa
-import soundfile as sf
-import os
-from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
-from moviepy.video.fx import speedx
-
-
 def find_nearest_zero_crossing(signal, target_idx):
     """
     Find the nearest zero-crossing index to the target index in a signal.
@@ -749,15 +732,6 @@ def find_nearest_zero_crossing(signal, target_idx):
         return forward_idx
     else:
         return backward_idx
-
-import subprocess
-import numpy as np
-import librosa
-import soundfile as sf
-import os
-from moviepy.editor import VideoFileClip, concatenate_videoclips, AudioFileClip
-from moviepy.video.fx import speedx
-import subprocess
 
 
 import numpy as np
