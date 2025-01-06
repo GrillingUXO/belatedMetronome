@@ -6,8 +6,13 @@ This program provides both an automatic mode (using midi for alignment) and a ma
 
 Automatic Mode:
 Automatically corrects timing using a double-loop Dynamic Time Warping (DTW) algorithm to align performance notes with reference sheet music.
-Computes relative time deviation coefficients and uses these to stretch or contract video and audio in alignment with the reference.
 Extracts note information using Crepe and cuts audio/video based on note boundaries.
+Computes relative time deviation coefficients and uses these to stretch or contract video and audio in alignment with the reference.
+
+Manual Mode: 
+Offers a graphical interface for manually editing the timing, pitch, and duration of notes.
+Recommended for complex sheet music or where precise customization is required.
+
 
 
 基于crepe notes的视频节拍纠正系统。
