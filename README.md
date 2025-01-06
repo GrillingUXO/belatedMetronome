@@ -19,7 +19,8 @@ Recommended for complex sheet music or where precise customization is required.
 自动模式下使用双循环DTW来匹配演奏音符至乐谱音符，并记录相对时值偏移系数。
 根据音符列表来切割音频和视频，同时应用相对时值系数以直接伸缩视频和音频。
 
-如果乐谱较为复杂或需要自定义时值，则推荐使用手动模式。
+如果乐谱较为复杂或需要自定义时值，则推荐使用手动模式。  
+
 
 
 
@@ -30,14 +31,16 @@ Recommended for complex sheet music or where precise customization is required.
 
 未修正的演奏音频：
 
-<img width="1280" alt="Screen Shot 2025-01-06 at 1 42 48 PM" src="https://github.com/user-attachments/assets/78d321e0-4f38-4c31-967a-b443cb842179" />
+<img width="1280" alt="Screen Shot 2025-01-06 at 1 42 48 PM" src="https://github.com/user-attachments/assets/78d321e0-4f38-4c31-967a-b443cb842179" />  
+
 
 
 
 
 转换后的演奏midi列表：
 
-<img width="932" alt="Screen Shot 2025-01-06 at 5 25 02 PM" src="https://github.com/user-attachments/assets/8003da00-676a-4b36-bb54-465645a2fe0c" />
+<img width="932" alt="Screen Shot 2025-01-06 at 5 25 02 PM" src="https://github.com/user-attachments/assets/8003da00-676a-4b36-bb54-465645a2fe0c" />  
+
 
 
 
@@ -45,7 +48,8 @@ Recommended for complex sheet music or where precise customization is required.
 
 原曲参考midi：
 
-<img width="933" alt="Screen Shot 2025-01-06 at 5 18 20 PM" src="https://github.com/user-attachments/assets/96c07468-ba89-41b4-8edc-2eef09890088" />
+<img width="933" alt="Screen Shot 2025-01-06 at 5 18 20 PM" src="https://github.com/user-attachments/assets/96c07468-ba89-41b4-8edc-2eef09890088" />  
+
 
 
 
@@ -54,7 +58,29 @@ dtw匹配示例：
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 4 06 55 PM" src="https://github.com/user-attachments/assets/7bb5719e-53b9-4e0c-9e16-e966b02e09c5" />
 
-<img width="1280" alt="Screen Shot 2025-01-06 at 4 07 04 PM" src="https://github.com/user-attachments/assets/1f592a2c-d1de-4b3d-a8bd-0f36b95ff078" />
+<img width="1280" alt="Screen Shot 2025-01-06 at 4 07 04 PM" src="https://github.com/user-attachments/assets/1f592a2c-d1de-4b3d-a8bd-0f36b95ff078" />  
+
+
+计算 time correction：
+```python
+reference_duration = mapping["reference_note"]["duration"]
+performance_duration = mapping["performance_note"]["duration"]
+time_correction = reference_duration / performance_duration
+
+
+计算 adjusted time correction（补偿交叉渐变造成的时长损失）：
+```python
+adjusted_time_correction = time_correction * (1 + crossfade_duration / duration)
+
+
+应用 adjusted time correction（视频片段采用原始time correction，因为视频片段没有应用交叉渐变）
+```python
+corrected_audio = np.stack([
+    librosa.effects.time_stretch(segment_audio[0], rate=1 / adjusted_time_correction),
+    librosa.effects.time_stretch(segment_audio[1], rate=1 / adjusted_time_correction)
+])
+
+
 
 
 
