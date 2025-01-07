@@ -57,7 +57,7 @@ Recommended for complex sheet music or where precise customization is required.
     
 
 
-## dtw匹配：
+## dtw距离检测：
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 4 06 55 PM" src="https://github.com/user-attachments/assets/7bb5719e-53b9-4e0c-9e16-e966b02e09c5" />  
 
