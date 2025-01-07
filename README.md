@@ -57,7 +57,7 @@ Recommended for complex sheet music or where precise customization is required.
     
 
 
-## dtw匹配示例：
+## dtw匹配：
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 4 06 55 PM" src="https://github.com/user-attachments/assets/7bb5719e-53b9-4e0c-9e16-e966b02e09c5" />  
 
@@ -67,12 +67,12 @@ Recommended for complex sheet music or where precise customization is required.
 
 
 
-计算 time correction：
+
+计算 time correction。ref_duration和perf_duration是归一化到节拍的相对值：
 ```python
-reference_duration = mapping["reference_note"]["duration"]
-performance_duration = mapping["performance_note"]["duration"]
-time_correction = reference_duration / performance_duration
+time_correction = ref_duration / perf_duration if perf_duration > 0 else 1.0
 ```
+
 
 
 
@@ -89,7 +89,7 @@ adjusted_time_correction = time_correction * (1 + crossfade_duration / duration)
 corrected_audio = np.stack([
     librosa.effects.time_stretch(segment_audio[0], rate=1 / adjusted_time_correction),
     librosa.effects.time_stretch(segment_audio[1], rate=1 / adjusted_time_correction)
-])
+]).astype('float32')
 ```
 
 
