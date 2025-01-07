@@ -76,7 +76,7 @@ time_correction = ref_duration / perf_duration if perf_duration > 0 else 1.0
 
 
 
-计算 adjusted time correction（补偿交叉渐变造成的时长损失，默认为10ms）：
+计算 adjusted time correction（补偿交叉渐变造成的时长损失，crossfade_duration默认为10ms）：
 ```python
 adjusted_time_correction = time_correction * (1 + crossfade_duration / duration)
 ```
@@ -84,7 +84,7 @@ adjusted_time_correction = time_correction * (1 + crossfade_duration / duration)
 
 
 
-应用 adjusted time correction（视频片段采用原始time correction，因为视频片段没有应用交叉渐变）
+应用 adjusted time correction
 ```python
 corrected_audio = np.stack([
     librosa.effects.time_stretch(segment_audio[0], rate=1 / adjusted_time_correction),
