@@ -6,9 +6,9 @@ A highly accurate video beat correction system.
 This program provides both an automatic mode (using midi for alignment) and a manual mode (via GUI) for adjusting the timing of notes in performance videos. Users can fine-tune the alignment by stretching or contracting the timing of both audio and video to match a reference.
 
 Automatic Mode:
-Automatically corrects timing using double-loop sequence alignment and Dynamic Time Warping algorithm to align performance notes with reference sheet music.
-Extracts note information using note mapping and cuts audio/video based on note boundaries.
-Computes relative time deviation coefficients and uses these to stretch or contract video and audio in alignment with the reference.
+A double-loop sequence matching and Dynamic Time Warping (DTW) are used to align performance notes to score notes, while recording the relative time offset coefficients and performance video cut points.
+
+The relative time coefficients are then applied directly to stretch or compress the corresponding video and audio segments, followed by smooth stitching.  
 
 Manual Mode: 
 Offers a graphical interface for manually editing the timing, pitch, and duration of notes.
@@ -17,8 +17,8 @@ Recommended for complex sheet music or where precise customization is required.
 
 
 基于crepe notes的视频节拍纠正系统。
-自动模式下使用双循环序列匹配和DTW来匹配演奏音符至乐谱音符，并记录相对时值偏移系数。
-根据音符列表来切割音频和视频，并应用相对时值系数直接伸缩对应的视频和音频段。
+自动模式下使用双循环序列匹配和DTW来匹配演奏音符至乐谱音符，并记录相对时值偏移系数和演奏视频切割点。
+应用相对时值系数直接伸缩对应的视频和音频段，然后平滑拼接。
 
 如果乐谱较为复杂或需要自定义时值，则推荐使用手动模式。  
 
