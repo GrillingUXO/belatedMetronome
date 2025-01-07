@@ -1,6 +1,7 @@
 # belatedMetronome
 
-A highly highly accurate video beat correction system.
+A highly highly accurate video beat correction system.  
+
 
 This program provides both an automatic mode (using midi for alignment) and a manual mode (via GUI) for adjusting the timing of notes in performance videos. Users can fine-tune the alignment by stretching or contracting the timing of both audio and video to match a reference.
 
@@ -46,9 +47,11 @@ Recommended for complex sheet music or where precise customization is required.
 
 
 
+
 原曲参考midi：
 
 <img width="933" alt="Screen Shot 2025-01-06 at 5 18 20 PM" src="https://github.com/user-attachments/assets/96c07468-ba89-41b4-8edc-2eef09890088" />  
+
 
 
     
@@ -56,7 +59,8 @@ Recommended for complex sheet music or where precise customization is required.
 
 dtw匹配示例：
 
-<img width="1280" alt="Screen Shot 2025-01-06 at 4 06 55 PM" src="https://github.com/user-attachments/assets/7bb5719e-53b9-4e0c-9e16-e966b02e09c5" />
+<img width="1280" alt="Screen Shot 2025-01-06 at 4 06 55 PM" src="https://github.com/user-attachments/assets/7bb5719e-53b9-4e0c-9e16-e966b02e09c5" />  
+
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 4 07 04 PM" src="https://github.com/user-attachments/assets/1f592a2c-d1de-4b3d-a8bd-0f36b95ff078" />  
 
@@ -66,6 +70,7 @@ dtw匹配示例：
 reference_duration = mapping["reference_note"]["duration"]
 performance_duration = mapping["performance_note"]["duration"]
 time_correction = reference_duration / performance_duration
+
 
 
 
@@ -83,6 +88,8 @@ corrected_audio = np.stack([
     librosa.effects.time_stretch(segment_audio[0], rate=1 / adjusted_time_correction),
     librosa.effects.time_stretch(segment_audio[1], rate=1 / adjusted_time_correction)
 ])
+
+
 
 
 
