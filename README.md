@@ -64,7 +64,7 @@ relative_position: 音符的相对位置。
     
 
 
-## dtw距离检测：
+## 计算dtw距离得分，匹配演奏音符和参考音符：
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 4 06 55 PM" src="https://github.com/user-attachments/assets/7bb5719e-53b9-4e0c-9e16-e966b02e09c5" />  
 
