@@ -38,21 +38,23 @@ Recommended for complex sheet music or where precise customization is required.
 
 
 
-## 转换后的演奏midi列表：
+## 转换后的演奏midi：
 
-<img width="932" alt="Screen Shot 2025-01-06 at 5 25 02 PM" src="https://github.com/user-attachments/assets/8003da00-676a-4b36-bb54-465645a2fe0c" />  
-
-
+<img width="847" alt="Screen Shot 2025-01-06 at 1 41 26 PM" src="https://github.com/user-attachments/assets/12ab812f-b594-4279-b727-6daab2dbf3e5" />
 
 
 
 
 
-## 原曲参考midi：
+
+
+## 参考midi：
 
 <img width="933" alt="Screen Shot 2025-01-06 at 5 18 20 PM" src="https://github.com/user-attachments/assets/96c07468-ba89-41b4-8edc-2eef09890088" />  
 
 
+  
+演奏音符列表和参考音符列表中，每个音符被表示为：(i, pitch, relative_duration, relative_position)
 
     
 
