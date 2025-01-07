@@ -6,8 +6,7 @@ A highly accurate video beat correction system.
 This program provides both an automatic mode (using midi for alignment) and a manual mode (via GUI) for adjusting the timing of notes in performance videos. Users can fine-tune the alignment by stretching or contracting the timing of both audio and video to match a reference.
 
 Automatic Mode:
-A double-loop sequence matching and Dynamic Time Warping (DTW) are used to align performance notes to score notes, while recording the relative time offset coefficients and performance video cut points.
-
+A double-loop sequence matching and Dynamic Time Warping (DTW) are used to align performance notes to score notes, while recording the relative time offset coefficients and performance video cut points. 
 The relative time coefficients are then applied directly to stretch or compress the corresponding video and audio segments, followed by smooth stitching.  
 
 Manual Mode: 
