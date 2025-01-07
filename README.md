@@ -76,7 +76,7 @@ time_correction = reference_duration / performance_duration
 
 
 
-计算 adjusted time correction（补偿交叉渐变造成的时长损失）：
+计算 adjusted time correction（补偿交叉渐变造成的时长损失，默认为10ms）：
 ```python
 adjusted_time_correction = time_correction * (1 + crossfade_duration / duration)
 ```
