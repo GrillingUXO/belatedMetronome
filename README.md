@@ -56,10 +56,6 @@ Recommended for complex sheet music or where precise customization is required.
   
 演奏音符列表和参考音符列表中，每个音符被表示为：(i, pitch, relative_duration, relative_position)
 
-i: 音符的顺序。
-pitch: 音符的音高。
-relative_duration: 音符的相对持续时间。
-relative_position: 音符的相对位置。
 
     
 
