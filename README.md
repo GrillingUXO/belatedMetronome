@@ -77,9 +77,33 @@ relative_position: 音符的相对位置。
 context_score = dtw_context_similarity(perf_idx, ref_idx)
 ```
 
+## 匹配结果列表
+额外记录了演奏音符的起始时间以切割原演奏视频。
+```python
+            matches.append({
+                "order": perf_order,
+                "performance_note": {
+                    "start": performance_notes[perf_idx][0],
+                    "pitch": performance_notes[perf_idx][1],
+                    "duration": performance_notes[perf_idx][2]
+                },
+                "reference_note": {
+                    "start": reference_notes[ref_idx][0],
+                    "pitch": reference_notes[ref_idx][1],
+                    "duration": reference_notes[ref_idx][2]
+                },
+                "original_relative_position": perf_position,
+                "corrected_relative_position": ref_position,
+                "time_correction": time_correction,
+                "relative_offset": relative_offset,
+                "match_round": 1,
+                "dtw_score": dtw_score
+            })
+```
 
 
-计算 time correction。ref_duration和perf_duration是归一化到节拍的相对值：
+## 计算 time correction：
+ref_duration和perf_duration是归一化到节拍的相对值。
 ```python
 time_correction = ref_duration / perf_duration if perf_duration > 0 else 1.0
 ```
