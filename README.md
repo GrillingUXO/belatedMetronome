@@ -56,6 +56,11 @@ Recommended for complex sheet music or where precise customization is required.
   
 演奏音符列表和参考音符列表中，每个音符被表示为：(i, pitch, relative_duration, relative_position)
 
+i: 音符的顺序。
+pitch: 音符的音高。
+relative_duration: 音符的相对持续时间。
+relative_position: 音符的相对位置。
+
     
 
 
@@ -66,7 +71,11 @@ Recommended for complex sheet music or where precise customization is required.
 
 <img width="1280" alt="Screen Shot 2025-01-06 at 4 07 04 PM" src="https://github.com/user-attachments/assets/1f592a2c-d1de-4b3d-a8bd-0f36b95ff078" />  
 
-
+  
+实际计算中考虑了全部音符属性
+```python
+context_score = dtw_context_similarity(perf_idx, ref_idx)
+```
 
 
 
