@@ -66,7 +66,7 @@ Recommended for complex sheet music or where precise customization is required.
 
 
 ## 相关算法：
-
+'''python
 #计算 time correction：
 
 reference_duration = mapping["reference_note"]["duration"]
@@ -75,12 +75,9 @@ time_correction = reference_duration / performance_duration
 
 
 
-
 #计算 adjusted time correction（补偿交叉渐变造成的时长损失）：
 
 adjusted_time_correction = time_correction * (1 + crossfade_duration / duration)
-
-
 
 
 
