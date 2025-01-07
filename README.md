@@ -65,30 +65,32 @@ Recommended for complex sheet music or where precise customization is required.
 <img width="1280" alt="Screen Shot 2025-01-06 at 4 07 04 PM" src="https://github.com/user-attachments/assets/1f592a2c-d1de-4b3d-a8bd-0f36b95ff078" />  
 
 
-## 相关算法：
-'''python
-#计算 time correction：
 
+
+## 计算 time correction：
+```python
 reference_duration = mapping["reference_note"]["duration"]
 performance_duration = mapping["performance_note"]["duration"]
 time_correction = reference_duration / performance_duration
+```
 
 
 
-#计算 adjusted time correction（补偿交叉渐变造成的时长损失）：
-
+## 计算 adjusted time correction（补偿交叉渐变造成的时长损失）：
+```python
 adjusted_time_correction = time_correction * (1 + crossfade_duration / duration)
+```
 
 
 
-#应用 adjusted time correction（视频片段采用原始time correction，因为视频片段没有应用交叉渐变）
 
+## 应用 adjusted time correction（视频片段采用原始time correction，因为视频片段没有应用交叉渐变）
+```python
 corrected_audio = np.stack([
     librosa.effects.time_stretch(segment_audio[0], rate=1 / adjusted_time_correction),
     librosa.effects.time_stretch(segment_audio[1], rate=1 / adjusted_time_correction)
 ])
-
-
+```
 
 
 
